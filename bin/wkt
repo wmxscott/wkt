@@ -636,7 +636,73 @@ cmd_rename() {
     print -r -- "${OUT_YELLOW}→${OUT_RESET} your shell is still in the old directory; run: cd ${(q-)new_path}"
 }
 
+# ui_fzf <prompt> <header> [<fzf args>...]: fzf with the picker's shared look.
+ui_fzf() {
+    local prompt=$1 header=$2
+    shift 2
+    fzf --ansi --layout=reverse --height=100% --border=none --margin=0 --padding=0 --no-info \
+        --prompt "$prompt" --header "$header" "$@" || return
+}
+
+# ui_parse <fzf output>: split what fzf printed with --print-query and
+# --expect into UI_QUERY, UI_KEY and UI_SEL.
+typeset -g UI_QUERY= UI_KEY= UI_SEL=
+ui_parse() {
+    local -a lines=("${(@f)1}")
+    UI_QUERY=${lines[1]-} UI_KEY=${lines[2]-} UI_SEL=${lines[3]-}
+}
+
+# ui_rows: fill UI_ROWS with one fzf row per worktree, default branch first,
+# and UI_AT with the current worktree's row, or 0. A row is
+# head<TAB>branch<TAB>tail<TAB>path.
+typeset -ga UI_ROWS
+typeset -gi UI_AT=0
+ui_rows() {
+    local common_dir default here
+    common_dir=$(common_git_dir)
+    default=$(detect_default_branch)
+    here=$(git rev-parse --show-toplevel 2>/dev/null || true)
+    [[ -n $here ]] && here=${here:A}
+
+    local -a e_path e_branch e_head
+    local line wt="" head="" branch="" bare=0
+    for line in "${(@f)$(git worktree list --porcelain)}" ""; do
+        case $line in
+            "worktree "* ) wt=${line#worktree } ;;
+            "HEAD "* ) head=${line#HEAD } ;;
+            "branch refs/heads/"* ) branch=${line#branch refs/heads/} ;;
+            bare ) bare=1 ;;
+            "" )
+                if [[ -n $wt ]] && (( ! bare )); then
+                    if [[ $branch == $default ]]; then
+                        e_path=("$wt" "${e_path[@]}") e_branch=("$branch" "${e_branch[@]}") e_head=("$head" "${e_head[@]}")
+                    else
+                        e_path+=("$wt") e_branch+=("$branch") e_head+=("$head")
+                    fi
+                fi
+                wt="" head="" branch="" bare=0 ;;
+        esac
+    done
+
+    local base=${common_dir:h} i shown name
+    UI_ROWS=() UI_AT=0
+    for (( i = 1; i <= ${#e_path}; i++ )); do
+        wt=${e_path[i]}
+        name=${e_branch[i]:-${e_head[i][1,7]}}
+        if [[ ${common_dir:t} == .bare && $wt == $base/* ]]; then
+            shown=${wt#$base/}
+        elif [[ $wt == $HOME || $wt == $HOME/* ]]; then
+            shown="~${wt#$HOME}"
+        else
+            shown=$wt
+        fi
+        [[ -n $here && ${wt:A} == $here ]] && UI_AT=$i
+        UI_ROWS+=($'\t'"${name}"$'\t'"${shown}"$'\t'"${wt}")
+    done
+}
+
 cmd_ui() {
+    exec 3>&1 1>&2
     git rev-parse --git-dir >/dev/null 2>&1 || die "Not inside a Git repository."
     command -v fzf >/dev/null 2>&1 || die "The picker needs fzf: brew install fzf"
 
@@ -645,6 +711,21 @@ cmd_ui() {
     major=${ver%%.*} minor=${${ver#*.}%%.*}
     [[ $major == <-> && $minor == <-> ]] && (( major > 0 || minor >= 36 )) ||
         die "The picker needs fzf 0.36 or newer; found ${ver:-an unknown version}." "brew upgrade fzf"
+
+    ui_rows
+    local -a args=(--delimiter $'\t' --with-nth 1..3 --nth 2 --tabstop 1 --expect ctrl-n --print-query)
+    (( UI_AT > 1 )) && args+=(--bind "load:pos($UI_AT)")
+
+    local out st=0
+    out=$({ (( ! ${#UI_ROWS} )) || print -rl -- "${UI_ROWS[@]}"; } |
+        ui_fzf '> ' "↵ open · ^n new · esc quit" "${args[@]}") || st=$?
+    (( st == 130 )) && exit 130
+    (( st == 0 || st == 1 )) || die "fzf exited with status $st."
+    ui_parse "$out"
+
+    # Task 6 starts a new worktree here, on ctrl-n or when nothing matched.
+    [[ $UI_KEY == ctrl-n || -z $UI_SEL ]] && return 0
+    print -r -- "${UI_SEL##*$'\t'}" >&3
 }
 
 case "${1-}" in
