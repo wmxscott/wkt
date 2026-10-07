@@ -636,6 +636,17 @@ cmd_rename() {
     print -r -- "${OUT_YELLOW}→${OUT_RESET} your shell is still in the old directory; run: cd ${(q-)new_path}"
 }
 
+cmd_ui() {
+    git rev-parse --git-dir >/dev/null 2>&1 || die "Not inside a Git repository."
+    command -v fzf >/dev/null 2>&1 || die "The picker needs fzf: brew install fzf"
+
+    local ver major minor
+    ver=${${(z)"$(fzf --version 2>/dev/null || true)"}[1]}
+    major=${ver%%.*} minor=${${ver#*.}%%.*}
+    [[ $major == <-> && $minor == <-> ]] && (( major > 0 || minor >= 36 )) ||
+        die "The picker needs fzf 0.36 or newer; found ${ver:-an unknown version}." "brew upgrade fzf"
+}
+
 case "${1-}" in
     setup ) shift; cmd_setup "$@" ;;
     adopt ) shift; cmd_adopt "$@" ;;
@@ -643,7 +654,13 @@ case "${1-}" in
     rename ) shift; cmd_rename "$@" ;;
     -h | --help | help ) usage ;;
     -V | --version ) print -r -- "wkt $VERSION" ;;
-    "" ) usage >&2; exit 2 ;;
+    "" )
+        if [[ -t 0 && -t 2 || -n ${WKT_ASSUME_TTY-} ]]; then
+            cmd_ui
+        else
+            usage >&2
+            exit 2
+        fi ;;
     -* ) usage_error "" "Unknown option: $1" ;;
     * ) usage_error "" "Unknown command: $1" ;;
 esac
