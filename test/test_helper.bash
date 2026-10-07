@@ -52,6 +52,9 @@ if [[ -n ${STUB_HERDR_FAIL:-} ]]; then
     echo '{"error":"server not running"}' >&2
     exit 1
 fi
+if [[ $1 == workspace && $2 == list ]]; then
+    printf '%s\n' "${STUB_HERDR_WORKSPACES:-}"
+fi
 EOF
 
     export STUB_GH_LOG="$TMP/gh.log"

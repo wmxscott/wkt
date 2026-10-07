@@ -319,3 +319,75 @@ plain_row() { row_for "$1" | cut -f 1-3 | sed $'s/\e\\[[0-9;]*m//g'; }
     run wkt
     contains "$(plain_row "$CLONE")" "/widget"
 }
+
+ICO_OPEN=$'\xef\x92\xaa'
+MACCHIATO_BLUE="38;2;138;173;244"
+
+# workspaces <path>...: herdr's 'workspace list' reply, with a workspace per
+# path and one without a worktree.
+workspaces() {
+    local path list=""
+    for path in "$@"; do
+        list+='{"id":"w:'"$path"'","label":"x","worktree":{"checkout_path":"'"$path"'","is_linked_worktree":true}},'
+    done
+    printf '{"id":"cli:workspace:list","result":{"type":"workspace_list","workspaces":[%s{"id":"w:none","label":"y"}]}}' "$list"
+}
+
+@test "inside Herdr: enter opens the workspace and prints nothing" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic --no-herdr >/dev/null
+    fzf_reply 1 0 "" "" $'x\ttopic\t\t'"$LAYOUT/topic"
+    run --separate-stderr wkt
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    contains "$(herdr_calls)" "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/topic --focus"
+}
+
+@test "inside Herdr: Herdr fails, the path is printed" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic --no-herdr >/dev/null
+    fzf_reply 1 0 "" "" $'x\ttopic\t\t'"$LAYOUT/topic"
+    STUB_HERDR_FAIL=1 run --separate-stderr wkt
+    [ "$status" -eq 0 ]
+    [ "$output" = "$LAYOUT/topic" ]
+    contains "$stderr" "warning:"
+}
+
+@test "open workspaces get the blue circle" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic --no-herdr >/dev/null
+    STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/topic") run picker_input
+    contains "$(row_for "$LAYOUT/topic")" "$ICO_OPEN"
+    contains "$(row_for "$LAYOUT/topic")" "$MACCHIATO_BLUE"
+    lacks "$(row_for "$LAYOUT/main")" "$ICO_OPEN"
+    contains "$(herdr_calls)" "workspace list"
+}
+
+@test "outside Herdr: workspace list is never called" {
+    unset HERDR_TAB_ID
+    make_layout
+    STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/main") run picker_input
+    lacks "$(herdr_calls)" "workspace list"
+    lacks "$(row_for "$LAYOUT/main")" "$ICO_OPEN"
+}
+
+@test "Herdr not answering: rows show no Herdr status" {
+    make_layout
+    STUB_HERDR_FAIL=1 STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/main") run picker_input
+    contains "$(row_for "$LAYOUT/main")" "$ICO_HOME"
+    lacks "$(row_for "$LAYOUT/main")" "$ICO_OPEN"
+}
+
+@test "current beats open-in-Herdr" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic --no-herdr >/dev/null
+    fzf_reply 1 130
+    cd "$LAYOUT/topic"
+    STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/topic") run wkt
+    contains "$(row_for "$LAYOUT/topic")" "$ICO_CURRENT"
+    lacks "$(row_for "$LAYOUT/topic")" "$ICO_OPEN"
+}
