@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # Shared setup: every test runs in its own temp dir with a scrubbed
-# environment, a throwaway HOME and git config, and stub herdr and gh
-# commands, so nothing touches a real Herdr session, GitHub or your repos.
+# environment, a throwaway HOME and git config, and stub herdr, gh and fzf
+# commands, so nothing touches a real Herdr session, GitHub, terminal or
+# your repos.
 # HERDR_TAB_ID is set to a dummy value so wkt behaves as if inside Herdr;
 # tests of the outside-Herdr path unset it.
 
@@ -13,7 +14,7 @@ common_setup() {
     local name
     for name in $(compgen -e); do
         case $name in
-            HERDR_* | GIT_* | GH_* | GITHUB_TOKEN | ZDOTDIR | XDG_* | DEV_DIR | NO_COLOR)
+            HERDR_* | GIT_* | GH_* | GITHUB_TOKEN | ZDOTDIR | XDG_* | WKT_* | DEV_DIR | NO_COLOR)
                 unset "$name" ;;
         esac
     done
@@ -63,13 +64,44 @@ if [[ $1 == pr && -n ${STUB_GH_PR:-} ]]; then
 fi
 exit 1
 EOF
-    chmod +x "$STUB_BIN/herdr" "$STUB_BIN/gh"
+
+    # fzf replays $STUB_FZF_DIR/reply.<n> for call n: an exit code on the
+    # first line, then fzf's stdout. See fzf_reply.
+    export STUB_FZF_DIR="$TMP/fzf"
+    mkdir -p "$STUB_FZF_DIR"
+    cat >"$STUB_BIN/fzf" <<'EOF'
+#!/bin/bash
+if [[ ${1-} == --version ]]; then
+    printf '%s\n' "${STUB_FZF_VERSION:-0.74.4 (stub)}"
+    exit 0
+fi
+n=$(( $(cat "$STUB_FZF_DIR/count" 2>/dev/null || echo 0) + 1 ))
+printf '%s\n' "$n" >"$STUB_FZF_DIR/count"
+printf '%s\0' "$@" >"$STUB_FZF_DIR/$n.args"
+if [[ -t 0 ]]; then
+    : >"$STUB_FZF_DIR/$n.in"
+else
+    cat >"$STUB_FZF_DIR/$n.in"
+fi
+reply="$STUB_FZF_DIR/reply.$n"
+if [[ ! -f $reply ]]; then
+    echo "stub fzf: no reply for call $n" >&2
+    exit 98
+fi
+tail -n +2 "$reply"
+exit "$(head -n 1 "$reply")"
+EOF
+    chmod +x "$STUB_BIN/herdr" "$STUB_BIN/gh" "$STUB_BIN/fzf"
+    export WKT_ASSUME_TTY=1 WKT_THEME=dark
 
     export PATH="$STUB_BIN:/usr/bin:/bin:/usr/sbin:/sbin"
-    if [[ "$(command -v herdr)" != "$STUB_BIN/herdr" || "$(command -v gh)" != "$STUB_BIN/gh" ]]; then
-        echo "refusing to run: herdr or gh doesn't resolve to the stub" >&2
-        return 1
-    fi
+    local tool
+    for tool in herdr gh fzf; do
+        if [[ "$(command -v "$tool")" != "$STUB_BIN/$tool" ]]; then
+            echo "refusing to run: $tool doesn't resolve to the stub" >&2
+            return 1
+        fi
+    done
 
     cd "$TMP" || return 1
 }
@@ -108,6 +140,21 @@ make_clone() {
 rev() { git -C "$1" rev-parse "$2"; }
 
 herdr_calls() { cat "$STUB_HERDR_LOG" 2>/dev/null || true; }
+
+# fzf_reply <n> <code> [<line>...]: what the stub fzf does on call n.
+fzf_reply() {
+    local n=$1
+    shift
+    printf '%s\n' "$@" >"$STUB_FZF_DIR/reply.$n"
+}
+
+# fzf_args <n>: call n's arguments, one per line.
+fzf_args() { tr '\0' '\n' <"$STUB_FZF_DIR/$1.args"; }
+
+# fzf_input <n>: what call n read on stdin.
+fzf_input() { cat "$STUB_FZF_DIR/$1.in"; }
+
+fzf_calls() { cat "$STUB_FZF_DIR/count" 2>/dev/null || echo 0; }
 
 # The last line of $output; macOS's bash 3.2 has no ${lines[-1]}.
 # shellcheck disable=SC2154 # bats sets $lines

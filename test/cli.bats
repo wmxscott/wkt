@@ -54,6 +54,7 @@ setup() { common_setup; }
 }
 
 @test "no arguments prints usage to stderr and exits 2" {
+    unset WKT_ASSUME_TTY
     run --separate-stderr wkt
     [ "$status" -eq 2 ]
     [ -z "$output" ]
