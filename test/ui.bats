@@ -287,3 +287,35 @@ trigger() {
     LC_ALL=C LANG=C run picker_input
     contains "$output" "$ICO_HOME"
 }
+
+@test "glyphs are written as escapes in the script" {
+    run perl -CSD -ne 'print "$.\n" if /[\x{e000}-\x{f8ff}\x{f0000}-\x{10ffff}\x{2026}\x{21b5}]/' "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "a non-UTF-8 LANG only changes the character set" {
+    make_layout
+    unset LC_ALL LC_CTYPE
+    LANG=C run picker_input
+    contains "$output" "$ICO_HOME"
+}
+
+# The visible text of a row: fields 1-3, escapes removed.
+plain_row() { row_for "$1" | cut -f 1-3 | sed $'s/\e\\[[0-9;]*m//g'; }
+
+@test "a path that only repeats the branch name is left out" {
+    make_layout
+    run picker_input
+    local text
+    text=$(plain_row "$LAYOUT/main")
+    contains "$text" "main"
+    lacks "${text#*main}" "main"
+
+    make_clone
+    cd "$CLONE"
+    rm -f "$STUB_FZF_DIR"/*
+    fzf_reply 1 130
+    run wkt
+    contains "$(plain_row "$CLONE")" "/widget"
+}

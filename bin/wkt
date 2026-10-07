@@ -641,8 +641,15 @@ cmd_rename() {
 typeset -gA PAL
 typeset -g UI_THEME=light
 ui_theme() {
-    # The glyphs need a UTF-8 locale to be written as escapes.
-    [[ ${LC_ALL:-${LC_CTYPE:-${LANG-}}} == *(UTF-8|utf-8|UTF8|utf8)* ]] || export LC_ALL=en_US.UTF-8
+    # The glyph escapes need a UTF-8 character set.
+    zmodload zsh/langinfo 2>/dev/null || true
+    if [[ ${langinfo[CODESET]-} != UTF-8 ]]; then
+        local loc
+        for loc in en_US.UTF-8 C.UTF-8; do
+            if [[ -n ${LC_ALL-} ]]; then export LC_ALL=$loc; else export LC_CTYPE=$loc; fi
+            [[ ${langinfo[CODESET]-} != UTF-8 ]] || break
+        done
+    fi
 
     local theme=${(L)${WKT_THEME-}}
     if [[ $theme != (light|dark) ]]; then
@@ -683,15 +690,15 @@ ui_theme() {
         )
     fi
 
-    typeset -g UI_ICO_BRANCH=$''     # nf-oct-git_branch
-    typeset -g UI_ICO_HOME=$''       # nf-oct-home
-    typeset -g UI_ICO_COMMIT=$''     # nf-oct-git_commit
-    typeset -g UI_ICO_CURRENT=$''    # nf-fa-circle
-    typeset -g UI_ICO_OPEN=$''       # nf-oct-circle
+    typeset -g UI_ICO_BRANCH=$'\uf418'     # nf-oct-git_branch
+    typeset -g UI_ICO_HOME=$'\uf46d'       # nf-oct-home
+    typeset -g UI_ICO_COMMIT=$'\uf417'     # nf-oct-git_commit
+    typeset -g UI_ICO_CURRENT=$'\uf111'    # nf-fa-circle
+    typeset -g UI_ICO_OPEN=$'\uf4aa'       # nf-oct-circle
     typeset -g UI_ICO_MISSING=$'\U000f0338' # nf-md-link_off
-    typeset -g UI_ICO_LOCKED=$''     # nf-oct-lock
-    typeset -g UI_ICO_ALERT=$''      # nf-oct-alert
-    typeset -g UI_ENTER=$'↵' UI_ELLIPSIS=$'…'
+    typeset -g UI_ICO_LOCKED=$'\uf456'     # nf-oct-lock
+    typeset -g UI_ICO_ALERT=$'\uf421'      # nf-oct-alert
+    typeset -g UI_ENTER=$'\u21b5' UI_ELLIPSIS=$'\u2026'
 }
 
 # ui_paint <colour> [bold|dim] <text>: the text in a PAL colour, in REPLY.
@@ -816,7 +823,9 @@ ui_rows() {
     for (( i = 1; i <= ${#e_path}; i++ )); do
         wt=${e_path[i]}
         names+=("${e_branch[i]:-${e_head[i][1,7]}}")
-        if [[ ${common_dir:t} == .bare && $wt == $base/* ]]; then
+        if [[ ${common_dir:t} == .bare && ${wt#$base/} == ${e_branch[i]} ]]; then
+            shown+=("")
+        elif [[ ${common_dir:t} == .bare && $wt == $base/* ]]; then
             shown+=("${wt#$base/}")
         elif [[ $wt == $HOME || $wt == $HOME/* ]]; then
             shown+=("~${wt#$HOME}")
