@@ -200,6 +200,10 @@ The CI smoke test stays the same. `zsh -n` and shellcheck cover the new code and
 
 - README: a new **Picker** section covering what plain `wkt` does, its keys, the shell function, the fzf requirement and `WKT_THEME`. `WKT_THEME` also goes in the Configuration table, and the Homebrew formula mentions fzf in its caveats.
 - The usage block gets a `wkt` line with no arguments.
+- README **Install** section lists the optional dependencies next to the existing Herdr note:
+  - **fzf** (0.36+, `brew install fzf`): needed only for the picker. Every `wkt <command>` works without it.
+  - **[wmxscott/theme-monitor](https://github.com/wmxscott/theme-monitor)**: lets the picker follow macOS light/dark mode through its trigger file. Without it, the picker asks macOS directly, or uses `WKT_THEME`.
+  - A Nerd Font in the terminal, for the picker's icons.
 
 ## Out of scope
 
