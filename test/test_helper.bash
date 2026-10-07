@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 # Shared setup: every test runs in its own temp dir with a scrubbed
-# environment, a throwaway HOME and git config, and stub herdr, gh and fzf
-# commands, so nothing touches a real Herdr session, GitHub, terminal or
-# your repos.
+# environment, a throwaway HOME and git config, and stub herdr, gh, fzf and
+# defaults commands, so nothing touches a real Herdr session, GitHub,
+# terminal, macOS setting or your repos.
 # HERDR_TAB_ID is set to a dummy value so wkt behaves as if inside Herdr;
 # tests of the outside-Herdr path unset it.
 
@@ -91,12 +91,20 @@ fi
 tail -n +2 "$reply"
 exit "$(head -n 1 "$reply")"
 EOF
-    chmod +x "$STUB_BIN/herdr" "$STUB_BIN/gh" "$STUB_BIN/fzf"
+    # macOS appearance, for the picker's theme: Dark, or unset for light.
+    export STUB_DEFAULTS_LOG="$TMP/defaults.log"
+    cat >"$STUB_BIN/defaults" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$*" >>"$STUB_DEFAULTS_LOG"
+[[ -n ${STUB_DEFAULTS_STYLE:-} ]] || exit 1
+printf '%s\n' "$STUB_DEFAULTS_STYLE"
+EOF
+    chmod +x "$STUB_BIN/herdr" "$STUB_BIN/gh" "$STUB_BIN/fzf" "$STUB_BIN/defaults"
     export WKT_ASSUME_TTY=1 WKT_THEME=dark
 
     export PATH="$STUB_BIN:/usr/bin:/bin:/usr/sbin:/sbin"
     local tool
-    for tool in herdr gh fzf; do
+    for tool in herdr gh fzf defaults; do
         if [[ "$(command -v "$tool")" != "$STUB_BIN/$tool" ]]; then
             echo "refusing to run: $tool doesn't resolve to the stub" >&2
             return 1

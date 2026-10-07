@@ -42,6 +42,12 @@ setup() { common_setup; make_origin; }
     STUB_FZF_VERSION=1.2.0 run --separate-stderr wkt
     [ "$status" -ne 1 ]
     lacks "$stderr" "error:"
+
+    rm -f "$STUB_FZF_DIR"/*
+    fzf_reply 1 130
+    STUB_FZF_VERSION=0.74.4 run --separate-stderr wkt
+    [ "$status" -ne 1 ]
+    lacks "$stderr" "error:"
 }
 
 @test "outside a repo: same error as wkt new" {
@@ -90,7 +96,7 @@ row_path() { fzf_input 1 | sed -n "${1}p" | cut -f 4; }
     run wkt
     lacks "$(fzf_args 1)" "load:pos"
 
-    rm -r "$STUB_FZF_DIR" && mkdir "$STUB_FZF_DIR"
+    rm -f "$STUB_FZF_DIR"/*
     cd "$LAYOUT"
     fzf_reply 1 130
     run wkt
@@ -143,4 +149,141 @@ row_path() { fzf_input 1 | sed -n "${1}p" | cut -f 4; }
     [ "$status" -eq 1 ]
     [ -z "$output" ]
     contains "$stderr" "fzf"
+}
+
+# Glyphs as UTF-8 bytes; bash 3.2 has no \u escapes.
+ICO_HOME=$'\xef\x91\xad'
+ICO_BRANCH=$'\xef\x90\x98'
+ICO_COMMIT=$'\xef\x90\x97'
+ICO_CURRENT=$'\xef\x84\x91'
+ICO_MISSING=$'\xf3\xb0\x8c\xb8'
+ICO_LOCKED=$'\xef\x91\x96'
+ELLIPSIS=$'\xe2\x80\xa6'
+MACCHIATO_TEXT="38;2;202;211;245"
+LATTE_TEXT="38;2;76;79;105"
+
+# The row of fzf call 1 whose path field is $1.
+row_for() { fzf_input 1 | awk -F '\t' -v p="$1" '$4 == p'; }
+
+# picker_input: run the picker in $LAYOUT, Esc at once, print the rows.
+picker_input() {
+    rm -f "$STUB_FZF_DIR"/*
+    fzf_reply 1 130
+    (cd "$LAYOUT" && wkt) >/dev/null 2>&1 || true
+    fzf_input 1
+}
+
+trigger() {
+    mkdir -p "$1/theme-monitor"
+    printf '%s\n' "$2" >"$1/theme-monitor/theme-change.trigger"
+}
+
+@test "dark theme: Macchiato colours" {
+    make_layout
+    run picker_input
+    contains "$output" "$MACCHIATO_TEXT"
+    lacks "$output" "$LATTE_TEXT"
+}
+
+@test "light from the theme-monitor trigger file" {
+    unset WKT_THEME
+    make_layout
+    trigger "$HOME/.local/share" light
+    STUB_DEFAULTS_STYLE=Dark run picker_input
+    contains "$output" "$LATTE_TEXT"
+    lacks "$output" "$MACCHIATO_TEXT"
+    [ ! -e "$STUB_DEFAULTS_LOG" ]
+}
+
+@test "XDG_DATA_HOME moves the trigger file" {
+    unset WKT_THEME
+    make_layout
+    trigger "$HOME/.local/share" light
+    trigger "$TMP/xdg" dark
+    XDG_DATA_HOME="$TMP/xdg" run picker_input
+    contains "$output" "$MACCHIATO_TEXT"
+}
+
+@test "WKT_THEME beats the trigger file; other values mean auto" {
+    make_layout
+    trigger "$HOME/.local/share" dark
+    WKT_THEME=light run picker_input
+    contains "$output" "$LATTE_TEXT"
+
+    WKT_THEME=bogus run picker_input
+    contains "$output" "$MACCHIATO_TEXT"
+}
+
+@test "no usable trigger file: macOS decides, else light" {
+    unset WKT_THEME
+    make_layout
+    trigger "$HOME/.local/share" blue
+    STUB_DEFAULTS_STYLE=Dark run picker_input
+    contains "$output" "$MACCHIATO_TEXT"
+    contains "$(cat "$STUB_DEFAULTS_LOG")" "read -g AppleInterfaceStyle"
+
+    rm "$HOME/.local/share/theme-monitor/theme-change.trigger"
+    run picker_input
+    contains "$output" "$LATTE_TEXT"
+}
+
+@test "NO_COLOR: no escapes, icons kept" {
+    make_layout
+    fzf_reply 1 130
+    (cd "$LAYOUT" && NO_COLOR=1 wkt) >/dev/null 2>&1 || true
+    lacks "$(fzf_input 1)" $'\e['
+    lacks "$(fzf_args 1)" $'\e['
+    contains "$(fzf_input 1)" "$ICO_HOME"
+}
+
+@test "icons" {
+    make_layout
+    cd "$LAYOUT"
+    local wt
+    for wt in topic gone held loose; do
+        wkt new -b "$wt" --no-herdr >/dev/null
+    done
+    rm -rf "$LAYOUT/gone"
+    git worktree lock "$LAYOUT/held"
+    git -C "$LAYOUT/loose" checkout --quiet --detach
+    fzf_reply 1 130
+    cd "$LAYOUT/topic"
+    run wkt
+
+    contains "$(row_for "$LAYOUT/main" | cut -f 1)" "$ICO_HOME"
+    lacks "$(row_for "$LAYOUT/main")" "$ICO_CURRENT"
+    contains "$(row_for "$LAYOUT/topic" | cut -f 1)" "$ICO_BRANCH"
+    contains "$(row_for "$LAYOUT/topic")" "$ICO_CURRENT"
+    contains "$(row_for "$LAYOUT/gone")" "$ICO_MISSING"
+    contains "$(row_for "$LAYOUT/held")" "$ICO_LOCKED"
+    contains "$(row_for "$LAYOUT/loose" | cut -f 1)" "$ICO_COMMIT"
+    contains "$(row_for "$LAYOUT/loose")" "$(git -C "$LAYOUT/loose" rev-parse --short=7 HEAD)"
+}
+
+@test "header: hints row" {
+    make_layout
+    run picker_input
+    contains "$(fzf_args 1)" $'\xe2\x86\xb5 open \xc2\xb7 ^n new \xc2\xb7 esc quit'
+}
+
+@test "long paths are cut from the left" {
+    make_clone
+    local long
+    long="$HOME/$(printf 'very-long-folder-name-%s/' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20)"
+    long=${long%/}
+    cd "$CLONE"
+    WKT_ROOT=$long wkt new -b topic --no-herdr >/dev/null
+    fzf_reply 1 130
+    run wkt
+    local shown
+    shown=$(row_for "$long/acme/widget/topic" | cut -f 3)
+    contains "$shown" "$ELLIPSIS"
+    contains "$shown" "/widget/topic"
+    lacks "$shown" "/very-long-folder-name-1/"
+}
+
+@test "works when the locale isn't UTF-8" {
+    make_layout
+    LC_ALL=C LANG=C run picker_input
+    contains "$output" "$ICO_HOME"
 }

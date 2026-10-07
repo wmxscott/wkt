@@ -636,6 +636,130 @@ cmd_rename() {
     print -r -- "${OUT_YELLOW}→${OUT_RESET} your shell is still in the old directory; run: cd ${(q-)new_path}"
 }
 
+# ui_theme: pick light or dark (WKT_THEME, then theme-monitor's trigger file,
+# then macOS) into UI_THEME, and fill PAL and the glyphs to match.
+typeset -gA PAL
+typeset -g UI_THEME=light
+ui_theme() {
+    # The glyphs need a UTF-8 locale to be written as escapes.
+    [[ ${LC_ALL:-${LC_CTYPE:-${LANG-}}} == *(UTF-8|utf-8|UTF8|utf8)* ]] || export LC_ALL=en_US.UTF-8
+
+    local theme=${(L)${WKT_THEME-}}
+    if [[ $theme != (light|dark) ]]; then
+        local data=${XDG_DATA_HOME-} file
+        [[ $data == /* ]] || data=$HOME/.local/share
+        file=$data/theme-monitor/theme-change.trigger
+        theme=""
+        if [[ -r $file ]]; then
+            theme=${"$(<$file)"//[[:space:]]/}
+        fi
+        if [[ $theme != (light|dark) ]]; then
+            theme=light
+            if [[ $OSTYPE == darwin* ]] && command -v defaults >/dev/null 2>&1; then
+                local style
+                style=$(defaults read -g AppleInterfaceStyle 2>/dev/null || true)
+                [[ $style != Dark ]] || theme=dark
+            fi
+        fi
+    fi
+    UI_THEME=$theme
+
+    # Catppuccin Macchiato and Latte, as in herdr-projects' theme.py.
+    if [[ $theme == dark ]]; then
+        PAL=(
+            base '36;39;58'       surface0 '54;58;79'    surface1 '73;77;100'
+            surface2 '91;96;120'  overlay0 '110;115;141' overlay1 '128;135;162'
+            subtext0 '165;173;203' text '202;211;245'
+            green '166;218;149'   red '237;135;150'      yellow '238;212;159'
+            peach '245;169;127'   mauve '198;160;246'    blue '138;173;244'
+        )
+    else
+        PAL=(
+            base '239;241;245'    surface0 '204;208;218' surface1 '188;192;204'
+            surface2 '172;176;190' overlay0 '156;160;176' overlay1 '140;143;161'
+            subtext0 '108;111;133' text '76;79;105'
+            green '64;160;43'     red '210;15;57'        yellow '223;142;29'
+            peach '254;100;11'    mauve '136;57;239'     blue '30;102;245'
+        )
+    fi
+
+    typeset -g UI_ICO_BRANCH=$''     # nf-oct-git_branch
+    typeset -g UI_ICO_HOME=$''       # nf-oct-home
+    typeset -g UI_ICO_COMMIT=$''     # nf-oct-git_commit
+    typeset -g UI_ICO_CURRENT=$''    # nf-fa-circle
+    typeset -g UI_ICO_OPEN=$''       # nf-oct-circle
+    typeset -g UI_ICO_MISSING=$'\U000f0338' # nf-md-link_off
+    typeset -g UI_ICO_LOCKED=$''     # nf-oct-lock
+    typeset -g UI_ICO_ALERT=$''      # nf-oct-alert
+    typeset -g UI_ENTER=$'↵' UI_ELLIPSIS=$'…'
+}
+
+# ui_paint <colour> [bold|dim] <text>: the text in a PAL colour, in REPLY.
+ui_paint() {
+    local colour=$1 attr=""
+    shift
+    if (( $# > 1 )); then
+        case $1 in
+            bold ) attr="1;" ;;
+            dim ) attr="2;" ;;
+        esac
+        shift
+    fi
+    if [[ -n ${NO_COLOR-} ]]; then
+        REPLY=$1
+    else
+        REPLY=$'\e['"${attr}38;2;${PAL[$colour]}m$1"$'\e[0m'
+    fi
+}
+
+# ui_header <hints> [<title>] [<notice>]: fzf's three header rows, in REPLY.
+# The notice comes painted.
+ui_header() {
+    local hints=$1 title=${2-} notice=${3-} line
+    if [[ -n $title ]]; then
+        ui_paint overlay0 dim " · $hints"
+        line=$REPLY
+        ui_paint text bold "$title"
+        line=$REPLY$line
+    else
+        ui_paint overlay0 dim "$hints"
+        line=$REPLY
+    fi
+    REPLY=" "$'\n'"$line"$'\n'"${notice:- }"
+}
+
+# ui_clip <cells> <text> [left]: the text cut to fit, an ellipsis marking the
+# cut at its end, or its start with 'left'. In REPLY.
+ui_clip() {
+    local -i cells=$1
+    local text=$2
+    if (( ${(m)#text} <= cells )); then
+        REPLY=$text
+    elif (( cells < 1 )); then
+        REPLY=""
+    elif [[ ${3-} == left ]]; then
+        (( ${#text} <= cells )) || text=${text[-cells,-1]}
+        while (( ${(m)#text} > cells - 1 )); do text=${text[2,-1]}; done
+        REPLY=$UI_ELLIPSIS$text
+    else
+        (( ${#text} <= cells )) || text=${text[1,cells]}
+        while (( ${(m)#text} > cells - 1 )); do text=${text[1,-2]}; done
+        REPLY=$text$UI_ELLIPSIS
+    fi
+}
+
+# ui_width: the cells a list row may take, in REPLY: the terminal less the
+# preview's 40% and fzf's pointer, marker and scrollbar columns.
+ui_width() {
+    local size cols
+    size=$({ stty size </dev/tty } 2>/dev/null || true)
+    cols=${${(z)size}[2]-}
+    [[ $cols == <-> ]] || cols=${COLUMNS-}
+    [[ $cols == <-> ]] && (( cols > 0 )) || cols=80
+    REPLY=$(( cols * 60 / 100 - 3 ))
+    (( REPLY >= 20 )) || REPLY=20
+}
+
 # ui_fzf <prompt> <header> [<fzf args>...]: fzf with the picker's shared look.
 ui_fzf() {
     local prompt=$1 header=$2
@@ -654,7 +778,7 @@ ui_parse() {
 
 # ui_rows: fill UI_ROWS with one fzf row per worktree, default branch first,
 # and UI_AT with the current worktree's row, or 0. A row is
-# head<TAB>branch<TAB>tail<TAB>path.
+# head<TAB>branch<TAB>tail<TAB>path; fzf shows a tab as one cell.
 typeset -ga UI_ROWS
 typeset -gi UI_AT=0
 ui_rows() {
@@ -662,42 +786,93 @@ ui_rows() {
     common_dir=$(common_git_dir)
     default=$(detect_default_branch)
     here=$(git rev-parse --show-toplevel 2>/dev/null || true)
-    [[ -n $here ]] && here=${here:A}
+    [[ -z $here ]] || here=${here:A}
 
-    local -a e_path e_branch e_head
-    local line wt="" head="" branch="" bare=0
+    local -a e_path e_branch e_head e_flag
+    local line wt="" head="" branch="" flag="" bare=0
     for line in "${(@f)$(git worktree list --porcelain)}" ""; do
         case $line in
             "worktree "* ) wt=${line#worktree } ;;
             "HEAD "* ) head=${line#HEAD } ;;
             "branch refs/heads/"* ) branch=${line#branch refs/heads/} ;;
             bare ) bare=1 ;;
+            prunable | "prunable "* ) flag=missing ;;
+            locked | "locked "* ) [[ $flag == missing ]] || flag=locked ;;
             "" )
                 if [[ -n $wt ]] && (( ! bare )); then
-                    if [[ $branch == $default ]]; then
-                        e_path=("$wt" "${e_path[@]}") e_branch=("$branch" "${e_branch[@]}") e_head=("$head" "${e_head[@]}")
+                    if [[ -n $branch && $branch == $default ]]; then
+                        e_path=("$wt" "${e_path[@]}") e_branch=("$branch" "${e_branch[@]}")
+                        e_head=("$head" "${e_head[@]}") e_flag=("$flag" "${e_flag[@]}")
                     else
-                        e_path+=("$wt") e_branch+=("$branch") e_head+=("$head")
+                        e_path+=("$wt") e_branch+=("$branch") e_head+=("$head") e_flag+=("$flag")
                     fi
                 fi
-                wt="" head="" branch="" bare=0 ;;
+                wt="" head="" branch="" flag="" bare=0 ;;
         esac
     done
 
-    local base=${common_dir:h} i shown name
+    local -a names shown
+    local base=${common_dir:h} name i
+    for (( i = 1; i <= ${#e_path}; i++ )); do
+        wt=${e_path[i]}
+        names+=("${e_branch[i]:-${e_head[i][1,7]}}")
+        if [[ ${common_dir:t} == .bare && $wt == $base/* ]]; then
+            shown+=("${wt#$base/}")
+        elif [[ $wt == $HOME || $wt == $HOME/* ]]; then
+            shown+=("~${wt#$HOME}")
+        else
+            shown+=("$wt")
+        fi
+    done
+
+    # Cells: an icon and a gap, the branch column, a gap, the path, the status.
+    local -i width label_end=0 room pad fill
+    ui_width
+    width=$REPLY
+    room=$(( width - 6 ))
+    for name in "${names[@]}"; do
+        (( ${(m)#name} <= label_end )) || label_end=${(m)#name}
+    done
+    (( label_end <= room )) || label_end=room
+
+    local icon status_icon label path_text sp=""
     UI_ROWS=() UI_AT=0
     for (( i = 1; i <= ${#e_path}; i++ )); do
         wt=${e_path[i]}
-        name=${e_branch[i]:-${e_head[i][1,7]}}
-        if [[ ${common_dir:t} == .bare && $wt == $base/* ]]; then
-            shown=${wt#$base/}
-        elif [[ $wt == $HOME || $wt == $HOME/* ]]; then
-            shown="~${wt#$HOME}"
+        if [[ -z ${e_branch[i]} ]]; then
+            icon=$UI_ICO_COMMIT
+        elif [[ ${e_branch[i]} == $default ]]; then
+            icon=$UI_ICO_HOME
         else
-            shown=$wt
+            icon=$UI_ICO_BRANCH
         fi
-        [[ -n $here && ${wt:A} == $here ]] && UI_AT=$i
-        UI_ROWS+=($'\t'"${name}"$'\t'"${shown}"$'\t'"${wt}")
+        ui_paint overlay1 "$icon"
+        icon=$REPLY
+
+        if [[ -n $here && ${wt:A} == $here ]]; then
+            UI_AT=$i
+            ui_paint green bold "$UI_ICO_CURRENT"
+        elif [[ ${e_flag[i]} == missing ]]; then
+            ui_paint red "$UI_ICO_MISSING"
+        elif [[ ${e_flag[i]} == locked ]]; then
+            ui_paint yellow "$UI_ICO_LOCKED"
+        else
+            REPLY=" "
+        fi
+        status_icon=$REPLY
+
+        ui_clip $label_end "${names[i]}"
+        name=$REPLY
+        ui_clip $(( room - label_end - 2 )) "${shown[i]}" left
+        path_text=$REPLY
+        pad=$(( label_end - ${(m)#name} + 1 ))
+        fill=$(( width - label_end - 6 - ${(m)#path_text} ))
+        (( fill >= 0 )) || fill=0
+        ui_paint text "$name"
+        label=$REPLY
+        ui_paint overlay0 dim "$path_text"
+
+        UI_ROWS+=("$icon "$'\t'"$label"$'\t'"${(l:pad:)sp}$REPLY${(l:fill:)sp}$status_icon"$'\t'"$wt")
     done
 }
 
@@ -706,19 +881,22 @@ cmd_ui() {
     git rev-parse --git-dir >/dev/null 2>&1 || die "Not inside a Git repository."
     command -v fzf >/dev/null 2>&1 || die "The picker needs fzf: brew install fzf"
 
-    local ver major minor
-    ver=${${(z)"$(fzf --version 2>/dev/null || true)"}[1]}
+    local -a words=(${(z)"$(fzf --version 2>/dev/null || true)"})
+    local ver=${words[1]-} major minor
     major=${ver%%.*} minor=${${ver#*.}%%.*}
     [[ $major == <-> && $minor == <-> ]] && (( major > 0 || minor >= 36 )) ||
         die "The picker needs fzf 0.36 or newer; found ${ver:-an unknown version}." "brew upgrade fzf"
 
+    ui_theme
     ui_rows
     local -a args=(--delimiter $'\t' --with-nth 1..3 --nth 2 --tabstop 1 --expect ctrl-n --print-query)
     (( UI_AT > 1 )) && args+=(--bind "load:pos($UI_AT)")
 
-    local out st=0
+    local out st=0 header
+    ui_header "$UI_ENTER open · ^n new · esc quit"
+    header=$REPLY
     out=$({ (( ! ${#UI_ROWS} )) || print -rl -- "${UI_ROWS[@]}"; } |
-        ui_fzf '> ' "↵ open · ^n new · esc quit" "${args[@]}") || st=$?
+        ui_fzf '> ' "$header" "${args[@]}") || st=$?
     (( st == 130 )) && exit 130
     (( st == 0 || st == 1 )) || die "fzf exited with status $st."
     ui_parse "$out"
