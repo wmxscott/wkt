@@ -487,9 +487,10 @@ cmd_new() {
         git worktree add --no-track -b "$new_branch" "$target_path" "$base_ref" >/dev/null
     fi
 
-    local herdr_note=""
+    local herdr_note="" opened=0
     if herdr_open "$common_dir" "$target_path" "$label"; then
         herdr_note="  ${OUT_BLUE}opened in Herdr${OUT_RESET}"
+        opened=1
     fi
 
     local display_path
@@ -500,6 +501,7 @@ cmd_new() {
     fi
 
     print -r -- "${OUT_GREEN}✓${OUT_RESET} ${new_branch}${label:+ ($label)}  ${display_path}${herdr_note}"
+    typeset -g WKT_PATH=$target_path WKT_HERDR_OPENED=$opened
 }
 
 cmd_rename() {
@@ -960,6 +962,93 @@ ui_preview() {
     done
 }
 
+# ui_ask <prompt> <default> <hints> [<notice>] [<fzf args>...]: an input
+# line of the new-worktree steps. The answer goes in UI_QUERY, and the key
+# in UI_KEY when --expect is passed. Returns 130 on Esc.
+ui_ask() {
+    local prompt=$1 default=$2 hints=$3 notice=${4-} out st=0
+    shift $(( $# < 4 ? $# : 4 ))
+    ui_header "$hints" "New worktree" "$notice"
+    out=$(ui_fzf "$prompt" "$REPLY" --print-query --disabled --query "$default" "$@" </dev/null) || st=$?
+    (( st != 130 )) || return 130
+    (( st == 0 || st == 1 )) || die "fzf exited with status $st."
+    local -a lines=("${(@f)out}")
+    UI_QUERY=${lines[1]-} UI_KEY=${lines[2]-}
+}
+
+# ui_sources: fill UI_SOURCES with a row per local and origin branch, once
+# each, default first. A row is icon<TAB>branch<TAB>plain branch.
+typeset -ga UI_SOURCES
+ui_sources() {
+    local default ref icon
+    default=$(detect_default_branch)
+    local -a names=()
+    for ref in ${(f)"$(git for-each-ref --format='%(refname:short)' refs/heads refs/remotes/origin)"}; do
+        ref=${ref#origin/}
+        [[ $ref == (origin|HEAD) ]] || names+=("$ref")
+    done
+    names=("${(@u)names}")
+    if (( ${names[(Ie)$default]} )); then
+        names=("$default" "${(@)names:#${(b)default}}")
+    fi
+
+    UI_SOURCES=()
+    for ref in "${names[@]}"; do
+        if [[ $ref == $default ]]; then
+            ui_paint overlay1 "$UI_ICO_HOME"
+        else
+            ui_paint overlay1 "$UI_ICO_BRANCH"
+        fi
+        icon=$REPLY
+        ui_paint text "$ref"
+        UI_SOURCES+=("$icon "$'\t'"$REPLY"$'\t'"$ref")
+    done
+}
+
+# ui_new <default>: the new-worktree steps, then cmd_new. Sets UI_BACK when
+# Esc discards them. Must not run on the left of || or &&, which would turn
+# off err_exit inside cmd_new.
+typeset -gi UI_BACK=0
+ui_new() {
+    local branch=$1 notice="" hints="$UI_ENTER accept · esc discards"
+    UI_BACK=1
+    while true; do
+        ui_ask 'Branch: ' "$branch" "$hints" "$notice" || return 0
+        branch=$UI_QUERY notice=""
+        [[ -n $branch ]] || continue
+        git check-ref-format --branch "$branch" >/dev/null 2>&1 && break
+        ui_paint red "$UI_ICO_ALERT '$branch' is not a valid branch name"
+        notice=$REPLY
+    done
+
+    local -a args=(-b "$branch")
+    if ! git show-ref --verify --quiet "refs/heads/$branch" &&
+        ! git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+        ui_sources
+        local out st=0
+        ui_header "$hints" "New worktree"
+        out=$(print -rl -- "${UI_SOURCES[@]}" |
+            ui_fzf 'Source: ' "$REPLY" --delimiter $'\t' --with-nth 1..2 --nth 2 --tabstop 1 \
+                --bind 'enter:accept-non-empty') || st=$?
+        (( st != 130 )) || return 0
+        (( st == 0 )) || die "fzf exited with status $st."
+        args+=(-s "${out##*$'\t'}")
+    fi
+
+    if [[ -n ${HERDR_TAB_ID-} ]] && (( ! NO_HERDR )); then
+        ui_ask 'Label: ' "" "$UI_ENTER accept · ^o don't open in Herdr · esc discards" "" \
+            --expect ctrl-o || return 0
+        if [[ $UI_KEY == ctrl-o ]]; then
+            args+=(--no-herdr)
+        elif [[ -n $UI_QUERY ]]; then
+            args+=(-n "$UI_QUERY")
+        fi
+    fi
+
+    UI_BACK=0
+    cmd_new "${args[@]}"
+}
+
 cmd_ui() {
     exec 3>&1 1>&2
     git rev-parse --git-dir >/dev/null 2>&1 || die "Not inside a Git repository."
@@ -974,24 +1063,33 @@ cmd_ui() {
     ui_theme
     export WKT_THEME=$UI_THEME
     ui_herdr_paths
-    ui_rows
-    local -a args=(--delimiter $'\t' --with-nth 1..3 --nth 2 --tabstop 1 --expect ctrl-n --print-query
-        --preview "${(q)SELF} __preview {4}" --preview-window 'right,40%,border-left')
-    (( UI_AT > 1 )) && args+=(--bind "load:pos($UI_AT)")
-
-    local out st=0 header
+    local header out st
     ui_header "$UI_ENTER open · ^n new · esc quit"
     header=$REPLY
-    out=$({ (( ! ${#UI_ROWS} )) || print -rl -- "${UI_ROWS[@]}"; } |
-        ui_fzf '> ' "$header" "${args[@]}") || st=$?
-    (( st == 130 )) && exit 130
-    (( st == 0 || st == 1 )) || die "fzf exited with status $st."
-    ui_parse "$out"
 
-    # Task 6 starts a new worktree here, on ctrl-n or when nothing matched.
-    [[ $UI_KEY == ctrl-n || -z $UI_SEL ]] && return 0
-    local wt=${UI_SEL##*$'\t'}
-    herdr_open "$(common_git_dir)" "$wt" || print -r -- "$wt" >&3
+    while true; do
+        ui_rows
+        local -a args=(--delimiter $'\t' --with-nth 1..3 --nth 2 --tabstop 1 --expect ctrl-n --print-query
+            --preview "${(q)SELF} __preview {4}" --preview-window 'right,40%,border-left')
+        (( UI_AT <= 1 )) || args+=(--bind "load:pos($UI_AT)")
+
+        st=0
+        out=$({ (( ! ${#UI_ROWS} )) || print -rl -- "${UI_ROWS[@]}"; } |
+            ui_fzf '> ' "$header" "${args[@]}") || st=$?
+        (( st != 130 )) || exit 130
+        (( st == 0 || st == 1 )) || die "fzf exited with status $st."
+        ui_parse "$out"
+
+        if [[ $UI_KEY == ctrl-n || -z $UI_SEL ]]; then
+            ui_new "$UI_QUERY"
+            (( ! UI_BACK )) || continue
+            (( WKT_HERDR_OPENED )) || print -r -- "$WKT_PATH" >&3
+            return 0
+        fi
+        local wt=${UI_SEL##*$'\t'}
+        herdr_open "$(common_git_dir)" "$wt" || print -r -- "$wt" >&3
+        return 0
+    done
 }
 
 case "${1-}" in

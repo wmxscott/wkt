@@ -461,3 +461,172 @@ MACCHIATO_YELLOW="38;2;238;212;159"
     contains "$args" "bin/wkt __preview {4}"
     contains "$args" $'--preview-window\nright,40%,border-left'
 }
+
+@test "ctrl-n: branch, source, then created and printed" {
+    unset HERDR_TAB_ID
+    make_layout
+    cd "$LAYOUT"
+    fzf_reply 1 0 "" ctrl-n ""
+    fzf_reply 2 1 topic
+    fzf_reply 3 0 develop
+    run --separate-stderr wkt
+    [ "$status" -eq 0 ]
+    [ "$output" = "$LAYOUT/topic" ]
+    [ "$(rev "$LAYOUT/topic" HEAD)" = "$(rev "$LAYOUT" origin/develop)" ]
+    contains "$stderr" "topic"
+    contains "$(fzf_args 2)" $'--prompt\nBranch: '
+    contains "$(fzf_args 2)" "New worktree"
+    contains "$(fzf_args 3)" $'--prompt\nSource: '
+}
+
+@test "ctrl-n: the search text is the default branch name" {
+    make_layout
+    cd "$LAYOUT"
+    fzf_reply 1 0 fix ctrl-n ""
+    fzf_reply 2 130
+    fzf_reply 3 130
+    run wkt
+    contains "$(fzf_args 2)" $'--query\nfix'
+}
+
+@test "enter with no match starts new, prefilled" {
+    make_layout
+    cd "$LAYOUT"
+    fzf_reply 1 1 fix-login ""
+    fzf_reply 2 130
+    fzf_reply 3 130
+    run wkt
+    [ "$status" -eq 130 ]
+    contains "$(fzf_args 2)" $'--query\nfix-login'
+}
+
+@test "a blank branch name asks again" {
+    make_layout
+    cd "$LAYOUT"
+    fzf_reply 1 0 "" ctrl-n ""
+    fzf_reply 2 1 ""
+    fzf_reply 3 130
+    fzf_reply 4 130
+    run wkt
+    [ "$status" -eq 130 ]
+    contains "$(fzf_args 3)" $'--prompt\nBranch: '
+}
+
+@test "bad branch name asks again with a notice" {
+    make_layout
+    cd "$LAYOUT"
+    fzf_reply 1 0 "" ctrl-n ""
+    fzf_reply 2 1 "a..b"
+    fzf_reply 3 130
+    fzf_reply 4 130
+    run wkt
+    [ "$status" -eq 130 ]
+    contains "$(fzf_args 3)" "'a..b' is not a valid branch name"
+    contains "$(fzf_args 3)" $'--query\na..b'
+}
+
+@test "source list: default first, origin branches merged in" {
+    make_layout
+    cd "$LAYOUT"
+    git branch --quiet local-only main
+    fzf_reply 1 0 "" ctrl-n ""
+    fzf_reply 2 1 topic
+    fzf_reply 3 130
+    fzf_reply 4 130
+    run wkt
+    local sources
+    sources=$(fzf_input 3 | awk -F '\t' '{ print $NF }')
+    [ "$(printf '%s\n' "$sources" | head -n 1)" = main ]
+    [ "$(printf '%s\n' "$sources" | grep -cx develop)" -eq 1 ]
+    [ "$(printf '%s\n' "$sources" | grep -cx feature-x)" -eq 1 ]
+    [ "$(printf '%s\n' "$sources" | grep -cx local-only)" -eq 1 ]
+    lacks "$sources" "origin"
+    lacks "$sources" "HEAD"
+    contains "$(fzf_input 3 | head -n 1)" "$ICO_HOME"
+    contains "$(fzf_args 3)" "enter:accept-non-empty"
+}
+
+@test "existing branch skips the source step" {
+    unset HERDR_TAB_ID
+    make_clone
+    cd "$CLONE"
+    fzf_reply 1 0 "" ctrl-n ""
+    fzf_reply 2 1 feature-x
+    run --separate-stderr wkt
+    [ "$status" -eq 0 ]
+    [ "$(fzf_calls)" -eq 2 ]
+    [ "$output" = "$HOME/.herdr/worktrees/acme/widget/feature-x" ]
+    [ "$(git -C "$output" rev-parse --abbrev-ref '@{upstream}')" = origin/feature-x ]
+}
+
+@test "inside Herdr: label step, then opened with the label" {
+    make_layout
+    cd "$LAYOUT"
+    fzf_reply 1 0 "" ctrl-n ""
+    fzf_reply 2 1 topic
+    fzf_reply 3 0 main
+    fzf_reply 4 1 Login ""
+    run --separate-stderr wkt
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    contains "$(fzf_args 4)" $'--prompt\nLabel: '
+    contains "$(fzf_args 4)" "^o don't open in Herdr"
+    contains "$(herdr_calls)" "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/topic --label Login --focus"
+}
+
+@test "inside Herdr: ctrl-o skips Herdr" {
+    make_layout
+    cd "$LAYOUT"
+    fzf_reply 1 0 "" ctrl-n ""
+    fzf_reply 2 1 topic
+    fzf_reply 3 0 main
+    fzf_reply 4 0 "" ctrl-o
+    run --separate-stderr wkt
+    [ "$status" -eq 0 ]
+    [ "$output" = "$LAYOUT/topic" ]
+    lacks "$(herdr_calls)" "worktree open"
+}
+
+@test "esc during new goes back to the list" {
+    make_layout
+    cd "$LAYOUT"
+    fzf_reply 1 0 "" ctrl-n ""
+    fzf_reply 2 1 topic
+    fzf_reply 3 130
+    fzf_reply 4 130
+    run --separate-stderr wkt
+    [ "$status" -eq 130 ]
+    [ -z "$output" ]
+    [ "$(fzf_calls)" -eq 4 ]
+    [ ! -e "$LAYOUT/topic" ]
+    contains "$(fzf_args 4)" "--expect"
+}
+
+@test "a failing new worktree ends the picker with its error" {
+    unset HERDR_TAB_ID
+    make_layout
+    cd "$LAYOUT"
+    mkdir "$LAYOUT/topic"
+    : >"$LAYOUT/topic/stray"
+    fzf_reply 1 0 "" ctrl-n ""
+    fzf_reply 2 1 topic
+    fzf_reply 3 0 main
+    run --separate-stderr wkt
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
+    contains "$stderr" "isn't a worktree of this repo"
+}
+
+@test "a git failure while creating stops the picker" {
+    unset HERDR_TAB_ID
+    make_layout
+    cd "$LAYOUT"
+    : >"$LAYOUT/fix"
+    fzf_reply 1 0 "" ctrl-n ""
+    fzf_reply 2 1 fix/login
+    fzf_reply 3 0 main
+    run --separate-stderr wkt
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+    lacks "$stderr" "✓"
+}
