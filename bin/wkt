@@ -48,6 +48,7 @@ Git worktrees in a .bare layout. Inside Herdr, new and renamed worktrees
 open as Herdr workspaces.
 
 Commands:
+  (no command)                    Pick or create a worktree (needs fzf)
   setup <repo-url>                Clone <repo-url> into a .bare worktree layout
                                   in the current (empty) directory
   adopt                           Turn the current clone into a .bare worktree
@@ -66,6 +67,7 @@ Options:
 Environment:
   WKT_ROOT                        Where worktrees of normal (non-.bare) repos
                                   go (default: ~/.herdr/worktrees)
+  WKT_THEME                       Picker colours: light, dark or auto (default)
   NO_COLOR                        Disable coloured output
 EOF
 }

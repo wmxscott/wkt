@@ -43,11 +43,20 @@ install -d ~/.local/bin
 install wkt/bin/wkt ~/.local/bin/
 ```
 
+### Optional dependencies
+
 Herdr is optional. wkt only talks to it when run inside a Herdr pane, which it detects from `HERDR_TAB_ID`. There, if `herdr` isn't on your `PATH` or can't reach the server, wkt still does the git work, prints a warning with the `herdr` command to run later, and exits successfully.
+
+The [picker](#the-picker) needs a little more:
+
+- **fzf** 0.36 or newer: `brew install fzf`. Only the picker uses it; every `wkt <command>` works without it.
+- **[wmxscott/theme-monitor](https://github.com/wmxscott/theme-monitor)** lets the picker follow macOS's light and dark mode through its trigger file. Without it, the picker asks macOS when it starts, or you can set `WKT_THEME`.
+- **A [Nerd Font](https://www.nerdfonts.com)** in your terminal, for the picker's icons.
 
 ## Usage
 
 ```
+wkt
 wkt new -b <branch> [-s <source>] [-n <label>] [--no-herdr]
 wkt rename -b <new-branch> [-n <label>] [-y] [--no-herdr]
 wkt setup <repo-url>
@@ -56,6 +65,43 @@ wkt --help | --version
 ```
 
 Every command also takes `--help`.
+
+### The picker
+
+Run `wkt` on its own, anywhere in a repository, to pick one of its worktrees or make a new one. It needs [fzf](#optional-dependencies).
+
+Each row shows a worktree's branch and folder. An icon at the end marks the worktree you're in, one that's open in Herdr, one whose folder is gone, or one that's locked. The pane on the right shows the highlighted worktree's upstream, changed files and recent commits. Typing searches branch names.
+
+| Key | |
+|---|---|
+| `Enter` | Open the highlighted worktree |
+| `Ctrl-N` | Make a new worktree, with what you typed as its branch name |
+| `Enter` with no matches | The same as `Ctrl-N` |
+| `Esc` | Quit |
+
+A new worktree takes up to three steps:
+
+1. **Branch.** The name for the branch and its folder. It's checked before moving on.
+2. **Source.** The branch to start from. Skipped when the branch already exists locally or on origin.
+3. **Label.** Inside Herdr only: the workspace's label. Leave it blank to let Herdr pick one, or press `Ctrl-O` to not open the worktree in Herdr.
+
+`Esc` at any step goes back to the list. After the last step, it runs [`wkt new`](#wkt-new) with your answers.
+
+Outside Herdr, the picker prints the chosen worktree's path and nothing else. Inside Herdr, it opens the worktree as a workspace and prints nothing, unless Herdr can't be reached; then it warns and prints the path.
+
+A program can't change its shell's folder, so to have plain `wkt` move you into the worktree you pick, add this function to `~/.zshrc` or `~/.bashrc`:
+
+```zsh
+wkt() {
+  (( $# )) && { command wkt "$@"; return; }
+  local dir; dir=$(command wkt) || return
+  [[ -n $dir ]] && cd -- "$dir"
+}
+```
+
+`wkt <command>` still runs the command as usual.
+
+The picker's colours are Catppuccin Latte in light mode and Macchiato in dark mode. It chooses once when it starts: `WKT_THEME` if it's `light` or `dark`, else theme-monitor's trigger file, else macOS's own setting.
 
 ### `wkt new`
 
@@ -165,7 +211,9 @@ wkt has no config file. It reads these environment variables:
 |---|---|---|
 | `WKT_ROOT` | `~/.herdr/worktrees` | Where worktrees of normal clones go. Must be absolute; a leading `~` is expanded. |
 | `HERDR_TAB_ID` | *(set by Herdr)* | Its presence means wkt is running inside Herdr, so it opens worktrees there |
-| `NO_COLOR` | *(unset)* | Set to anything to turn off coloured output. Output is plain whenever it isn't going to a terminal |
+| `WKT_THEME` | `auto` | The picker's colours: `light`, `dark` or `auto`. `auto` follows theme-monitor's trigger file, else macOS's setting |
+| `XDG_DATA_HOME` | `~/.local/share` | Where the picker looks for theme-monitor's `theme-monitor/theme-change.trigger` |
+| `NO_COLOR` | *(unset)* | Set to anything to turn off coloured output. The picker keeps its icons. Output is plain whenever it isn't going to a terminal |
 
 For example, in `~/.zshenv`:
 
@@ -178,7 +226,8 @@ export WKT_ROOT=~/src/worktrees
 | Status | |
 |---|---|
 | `0` | Done. This includes when Herdr couldn't be reached, which only warns |
-| `2` | Bad arguments |
+| `2` | Bad arguments, or plain `wkt` without a terminal |
+| `130` | The picker was closed with `Esc` |
 | Anything else | Something went wrong, such as not being in a repository or a folder in the way. A failing git command passes on its own status |
 
 ## Coding agents
@@ -193,7 +242,7 @@ bats test
 zsh -n bin/wkt
 ```
 
-The tests use [bats](https://github.com/bats-core/bats-core). Each one runs in a temporary folder against a local bare repository standing in for origin, with a throwaway `HOME`, every `HERDR_*` variable removed except a dummy `HERDR_TAB_ID`, and stub `herdr` and `gh` commands first on `PATH`. They never touch a running Herdr, GitHub or your own repositories. The stub `herdr` records its arguments, so the tests check exactly what wkt asks Herdr to do.
+The tests use [bats](https://github.com/bats-core/bats-core). Each one runs in a temporary folder against a local bare repository standing in for origin, with a throwaway `HOME`, every `HERDR_*` variable removed except a dummy `HERDR_TAB_ID`, and stub `herdr`, `gh`, `fzf` and `defaults` commands first on `PATH`. They never touch a running Herdr, GitHub, your terminal or your own repositories. The stub `herdr` records its arguments, so the tests check exactly what wkt asks Herdr to do. The stub `fzf` records what it was given and plays back answers each test scripts, and fails loudly when a test didn't expect a call.
 
 `contrib/wkt.rb` is the Homebrew formula.
 
