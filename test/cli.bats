@@ -7,11 +7,11 @@ setup() { common_setup; }
 @test "--version prints the version" {
     run wkt --version
     [ "$status" -eq 0 ]
-    [ "$output" = "wkt 1.0.0" ]
+    [ "$output" = "wkt 1.1.0" ]
 
     run wkt -V
     [ "$status" -eq 0 ]
-    [ "$output" = "wkt 1.0.0" ]
+    [ "$output" = "wkt 1.1.0" ]
 }
 
 @test "--help names the command it was run as" {
