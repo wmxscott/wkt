@@ -7,6 +7,7 @@ setopt err_exit pipe_fail
 
 VERSION=1.0.0
 PROG=${0:t}
+SELF=${0:A}
 
 typeset -g OUT_GREEN= OUT_BLUE= OUT_YELLOW= OUT_RESET=
 typeset -g ERR_RED= ERR_YELLOW= ERR_RESET=
@@ -902,6 +903,63 @@ ui_rows() {
     done
 }
 
+# ui_preview <path>: the preview pane for a worktree. It starts one line
+# down, because fzf draws its scroll position over the first line.
+ui_preview() {
+    local wt=${1-} name upstream line out
+    print
+    if [[ ! -d $wt ]]; then
+        ui_paint red "$UI_ICO_MISSING folder missing"
+        print -r -- "$REPLY"
+        ui_paint subtext0 "$(tildify "$wt")"
+        print -r -- "$REPLY"
+        return 0
+    fi
+
+    name=$(git -C "$wt" branch --show-current 2>/dev/null || true)
+    [[ -n $name ]] || name=$(git -C "$wt" rev-parse --short HEAD 2>/dev/null || true)
+    ui_paint text bold "$name"
+    print -r -- "$REPLY"
+    ui_paint subtext0 "$(tildify "$wt")"
+    print -r -- "$REPLY"
+
+    upstream=$(git -C "$wt" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)
+    if [[ -n $upstream ]]; then
+        local -a counts=($(git -C "$wt" rev-list --left-right --count 'HEAD...@{upstream}' 2>/dev/null || true))
+        ui_paint blue "$upstream"
+        out=$REPLY
+        ui_paint overlay0 dim " → "
+        out+=$REPLY
+        ui_paint text "${counts[1]:-0} ahead, ${counts[2]:-0} behind"
+        print -r -- "$out$REPLY"
+    fi
+
+    local -a changes=(${(f)"$(git -C "$wt" status --short 2>/dev/null | head -n 10 || true)"})
+    (( ! ${#changes} )) || print
+    for line in "${changes[@]}"; do
+        if [[ $line == '??'* ]]; then
+            ui_paint yellow '??'
+            out=$REPLY
+        else
+            ui_paint green "${line[1]}"
+            out=$REPLY
+            ui_paint red "${line[2]}"
+            out+=$REPLY
+        fi
+        ui_paint text "${line[4,-1]}"
+        print -r -- "$out $REPLY"
+    done
+
+    local -a commits=(${(f)"$(git -C "$wt" log --oneline --no-decorate --color=never -8 2>/dev/null || true)"})
+    (( ! ${#commits} )) || print
+    for line in "${commits[@]}"; do
+        ui_paint overlay0 dim "${line%% *}"
+        out=$REPLY
+        ui_paint text "${line#* }"
+        print -r -- "$out $REPLY"
+    done
+}
+
 cmd_ui() {
     exec 3>&1 1>&2
     git rev-parse --git-dir >/dev/null 2>&1 || die "Not inside a Git repository."
@@ -914,9 +972,11 @@ cmd_ui() {
         die "The picker needs fzf 0.36 or newer; found ${ver:-an unknown version}." "brew upgrade fzf"
 
     ui_theme
+    export WKT_THEME=$UI_THEME
     ui_herdr_paths
     ui_rows
-    local -a args=(--delimiter $'\t' --with-nth 1..3 --nth 2 --tabstop 1 --expect ctrl-n --print-query)
+    local -a args=(--delimiter $'\t' --with-nth 1..3 --nth 2 --tabstop 1 --expect ctrl-n --print-query
+        --preview "${(q)SELF} __preview {4}" --preview-window 'right,40%,border-left')
     (( UI_AT > 1 )) && args+=(--bind "load:pos($UI_AT)")
 
     local out st=0 header
@@ -941,6 +1001,7 @@ case "${1-}" in
     rename ) shift; cmd_rename "$@" ;;
     -h | --help | help ) usage ;;
     -V | --version ) print -r -- "wkt $VERSION" ;;
+    __preview ) shift; ui_theme; ui_preview "$@" ;;
     "" )
         if [[ -t 0 && -t 2 || -n ${WKT_ASSUME_TTY-} ]]; then
             cmd_ui

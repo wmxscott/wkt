@@ -391,3 +391,73 @@ workspaces() {
     contains "$(row_for "$LAYOUT/topic")" "$ICO_CURRENT"
     lacks "$(row_for "$LAYOUT/topic")" "$ICO_OPEN"
 }
+
+MACCHIATO_GREEN="38;2;166;218;149"
+MACCHIATO_YELLOW="38;2;238;212;159"
+
+@test "preview: a blank line, then the bold branch and the path" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic --no-herdr >/dev/null
+    run --separate-stderr wkt __preview "$LAYOUT/topic"
+    [ "$status" -eq 0 ]
+    starts_with "$output" $'\n\e[1;'"${MACCHIATO_TEXT}mtopic"
+    contains "$output" "$LAYOUT/topic"
+    [ -z "$stderr" ]
+}
+
+@test "preview: changed files, coloured by kind" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic --no-herdr >/dev/null
+    echo new >"$LAYOUT/topic/loose.txt"
+    echo staged >"$LAYOUT/topic/staged.txt"
+    git -C "$LAYOUT/topic" add staged.txt
+    run wkt __preview "$LAYOUT/topic"
+    contains "$output" "loose.txt"
+    contains "$output" "${MACCHIATO_YELLOW}m??"
+    contains "$output" "staged.txt"
+    contains "$output" "${MACCHIATO_GREEN}mA"
+}
+
+@test "preview: recent commits" {
+    make_layout
+    run wkt __preview "$LAYOUT/main"
+    contains "$output" "initial"
+    contains "$output" "$(git -C "$LAYOUT/main" rev-parse --short HEAD)"
+}
+
+@test "preview: the upstream and how far ahead and behind" {
+    make_layout
+    git -C "$LAYOUT/main" commit --quiet --allow-empty -m "local work"
+    run wkt __preview "$LAYOUT/main"
+    contains "$output" "origin/main"
+    contains "$output" "1 ahead"
+    contains "$output" "0 behind"
+}
+
+@test "preview: a missing folder says so" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic --no-herdr >/dev/null
+    rm -rf "$LAYOUT/topic"
+    run --separate-stderr wkt __preview "$LAYOUT/topic"
+    [ "$status" -eq 0 ]
+    contains "$output" "folder missing"
+    [ -z "$stderr" ]
+}
+
+@test "preview: not in --help" {
+    run wkt --help
+    lacks "$output" "__preview"
+}
+
+@test "the list shows the preview on the right" {
+    make_layout
+    run picker_input
+    local args
+    args=$(fzf_args 1)
+    contains "$args" $'--preview\n'
+    contains "$args" "bin/wkt __preview {4}"
+    contains "$args" $'--preview-window\nright,40%,border-left'
+}
