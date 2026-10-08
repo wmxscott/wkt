@@ -30,6 +30,13 @@ setup() { common_setup; }
     [ "${lines[0]}" = "Usage: wkt <command> [options]" ]
 }
 
+@test "--help mentions the picker and its theme" {
+    run wkt --help
+    [ "$status" -eq 0 ]
+    contains "$output" "Pick or create a worktree (needs fzf)"
+    contains "$output" "WKT_THEME"
+}
+
 @test "command help exits 0" {
     for cmd in setup adopt new rename; do
         run wkt "$cmd" --help
@@ -54,6 +61,7 @@ setup() { common_setup; }
 }
 
 @test "no arguments prints usage to stderr and exits 2" {
+    unset WKT_ASSUME_TTY
     run --separate-stderr wkt
     [ "$status" -eq 2 ]
     [ -z "$output" ]

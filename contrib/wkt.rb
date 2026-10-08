@@ -15,6 +15,16 @@ class Wkt < Formula
     bin.install "bin/wkt"
   end
 
+  def caveats
+    <<~EOS
+      Running wkt with no arguments opens a picker. It needs fzf 0.36 or newer:
+        brew install fzf
+      To have the picker follow macOS's light and dark mode, install
+      https://github.com/wmxscott/theme-monitor, or set WKT_THEME.
+      Its icons need a Nerd Font in your terminal.
+    EOS
+  end
+
   test do
     assert_match "wkt #{version}", shell_output("#{bin}/wkt --version")
     assert_match "Usage: wkt <command>", shell_output("#{bin}/wkt --help")
