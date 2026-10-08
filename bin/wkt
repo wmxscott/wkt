@@ -5,7 +5,7 @@
 emulate -R zsh
 setopt err_exit pipe_fail
 
-VERSION=1.0.0
+VERSION=1.1.0
 PROG=${0:t}
 SELF=${0:A}
 
