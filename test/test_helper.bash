@@ -4,7 +4,8 @@
 # defaults commands, so nothing touches a real Herdr session, GitHub,
 # terminal, macOS setting or your repos.
 # HERDR_TAB_ID is set to a dummy value so wkt behaves as if inside Herdr;
-# tests of the outside-Herdr path unset it.
+# tests of the outside-Herdr path unset it, and tests of a Herdr popup, which
+# has no tab, swap it for HERDR_ENV=1.
 
 bats_require_minimum_version 1.5.0
 
@@ -43,7 +44,7 @@ EOF
     export STUB_HERDR_LOG="$TMP/herdr.log"
     cat >"$STUB_BIN/herdr" <<'EOF'
 #!/bin/bash
-if env | grep '^HERDR_' | grep -qvx 'HERDR_TAB_ID=stub-tab'; then
+if env | grep '^HERDR_' | grep -qvx -e 'HERDR_TAB_ID=stub-tab' -e 'HERDR_ENV=1'; then
     echo "stub herdr: HERDR_* leaked into the environment" >&2
     exit 99
 fi

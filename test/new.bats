@@ -63,6 +63,16 @@ setup() {
     [ "$(last_line)" = "✓ topic (Login page)  ../topic  opened in Herdr" ]
 }
 
+@test "inside a Herdr popup: opened from HERDR_ENV alone" {
+    unset HERDR_TAB_ID
+    make_layout
+    cd "$LAYOUT/main"
+    HERDR_ENV=1 run wkt new -b topic
+    [ "$status" -eq 0 ]
+    [ "$(herdr_calls)" = "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/topic --focus" ]
+    [ "$(last_line)" = "✓ topic  ../topic  opened in Herdr" ]
+}
+
 # --- source branches ----------------------------------------------------------
 
 @test "-s branches from a custom source" {
