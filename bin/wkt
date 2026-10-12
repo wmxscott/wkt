@@ -244,12 +244,18 @@ worktree_root() {
     print -r -- "${root%/}"
 }
 
+# in_herdr: true when running inside Herdr. A popup, like the ones Herdr
+# plugins open, has no tab, so it sets HERDR_ENV but not HERDR_TAB_ID.
+in_herdr() {
+    [[ -n ${HERDR_TAB_ID-} || ${HERDR_ENV-} == 1 ]]
+}
+
 # herdr_open <repo-git-dir> <worktree-path> [<label>]
 # Open the worktree as a Herdr workspace, only when running inside Herdr and
 # not told --no-herdr. The git work is already done, so a missing or
 # unreachable Herdr only warns; the status says whether it opened.
 herdr_open() {
-    (( ! NO_HERDR )) && [[ -n ${HERDR_TAB_ID-} ]] || return 1
+    (( ! NO_HERDR )) && in_herdr || return 1
 
     local repo_dir=$1 wt_path=$2 label=${3-}
     local -a args=(worktree open --cwd "$repo_dir" --path "$wt_path")
@@ -793,7 +799,7 @@ ui_parse() {
 typeset -gA UI_HERDR
 ui_herdr_paths() {
     UI_HERDR=()
-    [[ -n ${HERDR_TAB_ID-} ]] && command -v herdr >/dev/null 2>&1 || return 0
+    in_herdr && command -v herdr >/dev/null 2>&1 || return 0
     local json found
     json=$(herdr workspace list 2>/dev/null || true)
     while [[ $json == *'"checkout_path":"'* ]]; do
@@ -1037,7 +1043,7 @@ ui_new() {
         args+=(-s "${out##*$'\t'}")
     fi
 
-    if [[ -n ${HERDR_TAB_ID-} ]] && (( ! NO_HERDR )); then
+    if in_herdr && (( ! NO_HERDR )); then
         ui_ask 'Label: ' "" "$UI_ENTER accept · ^o don't open in Herdr · esc discards" "" \
             --expect ctrl-o || return 0
         if [[ $UI_KEY == ctrl-o ]]; then

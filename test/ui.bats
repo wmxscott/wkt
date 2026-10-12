@@ -344,6 +344,18 @@ workspaces() {
     contains "$(herdr_calls)" "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/topic --focus"
 }
 
+@test "inside a Herdr popup: enter opens the workspace" {
+    unset HERDR_TAB_ID
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic --no-herdr >/dev/null
+    fzf_reply 1 0 "" "" $'x\ttopic\t\t'"$LAYOUT/topic"
+    HERDR_ENV=1 run --separate-stderr wkt
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    contains "$(herdr_calls)" "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/topic --focus"
+}
+
 @test "inside Herdr: Herdr fails, the path is printed" {
     make_layout
     cd "$LAYOUT"
@@ -572,6 +584,21 @@ MACCHIATO_YELLOW="38;2;238;212;159"
     contains "$(fzf_args 4)" $'--prompt\nLabel: '
     contains "$(fzf_args 4)" "^o don't open in Herdr"
     contains "$(herdr_calls)" "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/topic --label Login --focus"
+}
+
+@test "inside a Herdr popup: label step, then opened" {
+    unset HERDR_TAB_ID
+    make_layout
+    cd "$LAYOUT"
+    fzf_reply 1 0 "" ctrl-n ""
+    fzf_reply 2 1 topic
+    fzf_reply 3 0 main
+    fzf_reply 4 1 "" ""
+    HERDR_ENV=1 run --separate-stderr wkt
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    contains "$(fzf_args 4)" $'--prompt\nLabel: '
+    contains "$(herdr_calls)" "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/topic --focus"
 }
 
 @test "inside Herdr: ctrl-o skips Herdr" {

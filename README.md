@@ -45,7 +45,7 @@ install wkt/bin/wkt ~/.local/bin/
 
 ### Optional dependencies
 
-Herdr is optional. wkt only talks to it when run inside a Herdr pane, which it detects from `HERDR_TAB_ID`. There, if `herdr` isn't on your `PATH` or can't reach the server, wkt still does the git work, prints a warning with the `herdr` command to run later, and exits successfully.
+Herdr is optional. wkt only talks to it when run inside Herdr, which it detects from `HERDR_TAB_ID` in a pane or `HERDR_ENV` in a popup, such as one a Herdr plugin opens. There, if `herdr` isn't on your `PATH` or can't reach the server, wkt still does the git work, prints a warning with the `herdr` command to run later, and exits successfully.
 
 The [picker](#the-picker) needs a little more:
 
@@ -211,6 +211,7 @@ wkt has no config file. It reads these environment variables:
 |---|---|---|
 | `WKT_ROOT` | `~/.herdr/worktrees` | Where worktrees of normal clones go. Must be absolute; a leading `~` is expanded. |
 | `HERDR_TAB_ID` | *(set by Herdr)* | Its presence means wkt is running inside Herdr, so it opens worktrees there |
+| `HERDR_ENV` | *(set by Herdr)* | `1` also means wkt is running inside Herdr. Popups set it but not `HERDR_TAB_ID` |
 | `WKT_THEME` | `auto` | The picker's colours: `light`, `dark` or `auto`. `auto` follows theme-monitor's trigger file, else macOS's setting |
 | `XDG_DATA_HOME` | `~/.local/share` | Where the picker looks for theme-monitor's `theme-monitor/theme-change.trigger` |
 | `NO_COLOR` | *(unset)* | Set to anything to turn off coloured output. The picker keeps its icons. Output is plain whenever it isn't going to a terminal |
@@ -242,7 +243,7 @@ bats test
 zsh -n bin/wkt
 ```
 
-The tests use [bats](https://github.com/bats-core/bats-core). Each one runs in a temporary folder against a local bare repository standing in for origin, with a throwaway `HOME`, every `HERDR_*` variable removed except a dummy `HERDR_TAB_ID`, and stub `herdr`, `gh`, `fzf` and `defaults` commands first on `PATH`. They never touch a running Herdr, GitHub, your terminal or your own repositories. The stub `herdr` records its arguments, so the tests check exactly what wkt asks Herdr to do. The stub `fzf` records what it was given and plays back answers each test scripts, and fails loudly when a test didn't expect a call.
+The tests use [bats](https://github.com/bats-core/bats-core). Each one runs in a temporary folder against a local bare repository standing in for origin, with a throwaway `HOME`, every `HERDR_*` variable removed except a dummy `HERDR_TAB_ID` (or `HERDR_ENV=1` for the popup tests), and stub `herdr`, `gh`, `fzf` and `defaults` commands first on `PATH`. They never touch a running Herdr, GitHub, your terminal or your own repositories. The stub `herdr` records its arguments, so the tests check exactly what wkt asks Herdr to do. The stub `fzf` records what it was given and plays back answers each test scripts, and fails loudly when a test didn't expect a call.
 
 `contrib/wkt.rb` is the Homebrew formula.
 
