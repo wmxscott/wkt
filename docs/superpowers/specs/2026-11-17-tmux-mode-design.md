@@ -1,6 +1,6 @@
 # wkt tmux mode: design
 
-**Status:** the builder check is done and its questions are answered. Waiting on the user's approval.
+**Status:** approved by the user on 2026-11-17.
 
 ## Why
 
