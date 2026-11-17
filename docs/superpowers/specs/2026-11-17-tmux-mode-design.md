@@ -97,10 +97,10 @@ Items marked *(my call)* weren't discussed with the user. They're mine to settle
 
 ### The tmux key, in the dotfiles repo
 
-The tmux core design reserved `prefix shift+g` for "new worktree" in this project, as in Herdr.
-
-- It opens the picker as `wkt --tmux` in a tmux popup. Typing a new branch name and pressing Enter makes the worktree and switches to it. *(my call)*
-- This means the picker, including `Ctrl-D` on the session you're in, has to work inside a tmux popup.
+- **`prefix W`** opens the picker as `wkt --tmux` in a tmux popup. That's the user's choice. Typing a new branch name and pressing Enter makes the worktree and switches to it.
+- **Renaming a session** keeps tmux's built-in `prefix $`. `prefix W` did that until now, but wkt names the sessions, so it's rarely needed by hand.
+- **`prefix G` stays free.** It's lazygit in the user's Herdr setup and comes back with the Launchpad port in project 4. The tmux core design wrongly reserved it for "new worktree", so correct that note.
+- The picker, including `Ctrl-D` on the session you're in, has to work inside a tmux popup.
 
 ## Constraints
 
