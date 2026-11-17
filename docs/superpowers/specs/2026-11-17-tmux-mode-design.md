@@ -19,7 +19,7 @@ The user asked for two changes to how wkt behaves:
 
 - `wkt new --tmux` creates or reuses the worktree and puts you in its tmux session.
 - `wkt rename` keeps an existing tmux session or Herdr workspace in step, with no flag.
-- `wkt rm` removes a finished worktree together with its session or workspace, without losing work.
+- `wkt rm` removes a finished worktree together with its session or workspace, without losing work. `wkt rm --merged` clears every merged one at once.
 - The picker can open worktrees in tmux or Herdr, and can remove them.
 - Herdr keeps working through `--herdr` while the user still uses it.
 
@@ -95,12 +95,24 @@ Items marked *(my call)* weren't discussed with the user. They're mine to settle
 - **It refuses** the main checkout of a normal clone, and the default branch's worktree in a `.bare` layout. *(my call)*
 - **Picker:** `Ctrl-D` removes the highlighted worktree after asking to confirm.
 
+### `wkt rm --merged`
+
+This replaces the user's Herdr key `prefix Alt+c`, "remove merged worktrees". That's the user's choice.
+
+- **What it does:** removes every worktree whose branch counts as merged under the branch-deletion rule above. Each one goes as `wkt rm` would remove it: the folder, the session, the Herdr workspace and the local branch.
+- **It lists them and asks before deleting anything.** `-y` skips the question. When there's no terminal to ask on, it stops unless `-y` is given.
+- **It skips, and reports, any merged worktree** that has uncommitted changes, untracked files or commits never pushed. `-f` doesn't apply here.
+- **It never touches** the main checkout or the default branch's worktree.
+- **Scope:** the repository it's run in, not every repository. *(my call)* Project 3's switcher knows every repo and can offer a wider cleanup later.
+- **If you're in one of the sessions being removed,** you land as with `wkt rm`.
+- **Picker:** `Ctrl-X` runs it after asking to confirm. That's the user's choice, so there's no separate tmux key for it.
+
 ### The tmux key, in the dotfiles repo
 
 - **`prefix W`** opens the picker as `wkt --tmux` in a tmux popup. That's the user's choice. Typing a new branch name and pressing Enter makes the worktree and switches to it.
 - **Renaming a session** keeps tmux's built-in `prefix $`. `prefix W` did that until now, but wkt names the sessions, so it's rarely needed by hand.
 - **`prefix G` stays free.** It's lazygit in the user's Herdr setup and comes back with the Launchpad port in project 4. The tmux core design wrongly reserved it for "new worktree", so correct that note.
-- The picker, including `Ctrl-D` on the session you're in, has to work inside a tmux popup.
+- The picker, including `Ctrl-D` and `Ctrl-X` on the session you're in, has to work inside a tmux popup.
 
 ## Constraints
 
@@ -145,7 +157,11 @@ Items marked *(my call)* weren't discussed with the user. They're mine to settle
     - a clean removal and each refusal
     - `-f`, and both branch-deletion rules
     - leaving the session you're in
-  - the picker's flags and `Ctrl-D`
+  - `rm --merged`:
+    - the list and the question, `-y`, and no terminal
+    - skipping unsafe worktrees
+    - leaving the main checkout and the default branch alone
+  - the picker's flags, `Ctrl-D` and `Ctrl-X`
   - `--no-herdr` doing nothing
 - **Shipped:** CI is green, 2.0.0 is released through the tap, Launchpad's entry is updated, and the agent skills are updated.
 - **The user has checked in Ghostty:**
