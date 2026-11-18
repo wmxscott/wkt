@@ -1,11 +1,12 @@
 #!/usr/bin/env zsh
-# wkt: git worktrees in a .bare layout, opened as Herdr workspaces on request.
+# wkt: git worktrees in a .bare layout, opened as tmux sessions or Herdr
+# workspaces on request.
 # https://github.com/wmxscott/wkt
 
 emulate -R zsh
 setopt err_exit pipe_fail
 
-VERSION=1.1.1
+VERSION=2.0.0
 PROG=${0:t}
 SELF=${0:A}
 
