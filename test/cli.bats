@@ -107,6 +107,7 @@ setup() { common_setup; }
     contains "$(wkt new --help)" "--herdr"
     contains "$(wkt new --help)" "--tmux"
     lacks "$(wkt rename --help)" "--herdr"
+    lacks "$(wkt rename --help)" "--tmux"
     run wkt --herdr --help
     [ "$status" -eq 0 ]
     starts_with "${lines[0]}" "Usage: wkt"
@@ -149,6 +150,8 @@ setup() { common_setup; }
 
     run wkt rename -b a --tmux
     [ "$status" -eq 2 ]
+    contains "$output" "rename doesn't take --tmux"
+    contains "$output" "tmux session"
 }
 
 @test "setup: argument errors" {
