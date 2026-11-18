@@ -82,15 +82,17 @@ setup() { common_setup; }
     contains "$output" "Unexpected argument: extra"
 }
 
-@test "--tmux isn't supported yet" {
+@test "the picker doesn't take --tmux yet" {
     run wkt --tmux
     [ "$status" -eq 2 ]
     contains "$output" "--tmux isn't supported yet"
     contains "$output" "Run 'wkt --help' for usage."
+}
 
-    run wkt new -b topic --tmux
+@test "--tmux and --herdr together" {
+    run wkt new -b topic --tmux --herdr
     [ "$status" -eq 2 ]
-    contains "$output" "--tmux isn't supported yet"
+    contains "$output" "--tmux and --herdr can't be used together."
     contains "$output" "Run 'wkt new --help' for usage."
 }
 
@@ -103,6 +105,7 @@ setup() { common_setup; }
     done
     contains "$(wkt --help)" "--herdr"
     contains "$(wkt new --help)" "--herdr"
+    contains "$(wkt new --help)" "--tmux"
     lacks "$(wkt rename --help)" "--herdr"
     run wkt --herdr --help
     [ "$status" -eq 0 ]

@@ -1,10 +1,11 @@
 # shellcheck shell=bash
 # Shared setup: every test runs in its own temp dir with a scrubbed
-# environment, a throwaway HOME and git config, and stub herdr, gh, fzf and
-# defaults commands, so nothing touches a real Herdr session, GitHub,
-# terminal, macOS setting or your repos.
+# environment, a throwaway HOME and git config, and stub herdr, tmux, gh, fzf
+# and defaults commands, so nothing touches a real Herdr session, tmux server,
+# GitHub, terminal, macOS setting or your repos.
 # HERDR_TAB_ID is set to a dummy value, so every test also shows that wkt
 # opens nothing in Herdr unasked; tests that must run outside Herdr unset it.
+# TMUX is always unset; tests that run inside tmux set TMUX=stub themselves.
 
 bats_require_minimum_version 1.5.0
 
@@ -14,7 +15,7 @@ common_setup() {
     local name
     for name in $(compgen -e); do
         case $name in
-            HERDR_* | GIT_* | GH_* | GITHUB_TOKEN | ZDOTDIR | XDG_* | WKT_* | DEV_DIR | NO_COLOR)
+            HERDR_* | TMUX | TMUX_* | GIT_* | GH_* | GITHUB_TOKEN | ZDOTDIR | XDG_* | WKT_* | DEV_DIR | NO_COLOR)
                 unset "$name" ;;
         esac
     done
@@ -57,6 +58,22 @@ fi
 if [[ $1 == workspace && $2 == list ]]; then
     printf '%s\n' "${STUB_HERDR_WORKSPACES:-}"
 fi
+EOF
+
+    # STUB_TMUX_FAIL=1 fails every tmux call; a command, like switch-client,
+    # fails only that one.
+    export STUB_TMUX_LOG="$TMP/tmux.log"
+    cat >"$STUB_BIN/tmux" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$*" >>"$STUB_TMUX_LOG"
+if [[ -n ${STUB_TMUX_FAIL:-} && ( $STUB_TMUX_FAIL == 1 || $STUB_TMUX_FAIL == "$1" ) ]]; then
+    echo "stub tmux: $1 failed" >&2
+    exit 1
+fi
+case $1 in
+    list-sessions ) [[ -z ${STUB_TMUX_SESSIONS:-} ]] || printf '%s\n' "$STUB_TMUX_SESSIONS" ;;
+    display-message ) [[ " $* " != *" -p "* ]] || printf '%s\n' "${STUB_TMUX_CURRENT:-}" ;;
+esac
 EOF
 
     export STUB_GH_LOG="$TMP/gh.log"
@@ -104,12 +121,12 @@ printf '%s\n' "$*" >>"$STUB_DEFAULTS_LOG"
 [[ -n ${STUB_DEFAULTS_STYLE:-} ]] || exit 1
 printf '%s\n' "$STUB_DEFAULTS_STYLE"
 EOF
-    chmod +x "$STUB_BIN/herdr" "$STUB_BIN/gh" "$STUB_BIN/fzf" "$STUB_BIN/defaults"
+    chmod +x "$STUB_BIN/herdr" "$STUB_BIN/tmux" "$STUB_BIN/gh" "$STUB_BIN/fzf" "$STUB_BIN/defaults"
     export WKT_ASSUME_TTY=1 WKT_THEME=dark
 
     export PATH="$STUB_BIN:/usr/bin:/bin:/usr/sbin:/sbin"
     local tool
-    for tool in herdr gh fzf defaults; do
+    for tool in herdr tmux gh fzf defaults; do
         if [[ "$(command -v "$tool")" != "$STUB_BIN/$tool" ]]; then
             echo "refusing to run: $tool doesn't resolve to the stub" >&2
             return 1
@@ -153,6 +170,17 @@ make_clone() {
 rev() { git -C "$1" rev-parse "$2"; }
 
 herdr_calls() { cat "$STUB_HERDR_LOG" 2>/dev/null || true; }
+
+tmux_calls() { cat "$STUB_TMUX_LOG" 2>/dev/null || true; }
+
+# sessions <name> <tag> <path>...: tmux's list-sessions reply, a row of
+# session name, @wkt-worktree and session_path for every three arguments.
+sessions() {
+    while [ $# -ge 3 ]; do
+        printf '%s\t%s\t%s\n' "$1" "$2" "$3"
+        shift 3
+    done
+}
 
 # workspaces <path>...: herdr's 'workspace list' reply, with a workspace per
 # path and one without a worktree.

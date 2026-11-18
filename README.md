@@ -6,7 +6,7 @@ Git worktrees in a predictable place, one command each. Ask, and they open as [H
 
 Give each piece of work its own git worktree and parallel tasks, or coding agents, can't trip over each other's checkouts. wkt makes that one command: it puts the worktree in a predictable place and starts the branch from a freshly fetched default branch. When the branch earns a better name, one more command renames the branch, its directory and the branch on origin together.
 
-Herdr runs coding agents in persistent terminal workspaces. Pass `--herdr` and wkt also opens the worktree as a Herdr workspace. A rename moves a worktree's workspace with it, whether or not you ask.
+Herdr runs coding agents in persistent terminal workspaces. Pass `--herdr` and wkt also opens the worktree as a Herdr workspace. A rename moves a worktree's workspace with it, whether or not you ask. Pass `--tmux` instead and `wkt new` opens the worktree as a [tmux session](#tmux).
 
 ```console
 $ wkt new -b fix-login --herdr
@@ -47,6 +47,8 @@ install wkt/bin/wkt ~/.local/bin/
 
 Herdr is optional, and wkt never opens anything in it unless you pass `--herdr`. Then, if `herdr` isn't on your `PATH` or can't reach the server, wkt still does the git work, prints a warning with the `herdr` command to run later, and exits successfully. The picker and `wkt rename` also ask Herdr which worktrees have a workspace, and say nothing when it isn't there to answer.
 
+tmux is optional too, and wkt only talks to it when you pass `--tmux`. If `tmux` isn't on your `PATH`, or a tmux command fails, wkt still does the git work, warns, and exits successfully.
+
 The [picker](#the-picker) needs a little more:
 
 - **fzf** 0.36 or newer: `brew install fzf`. Only the picker uses it; every `wkt <command>` works without it.
@@ -57,7 +59,7 @@ The [picker](#the-picker) needs a little more:
 
 ```
 wkt [--herdr]
-wkt new -b <branch> [-s <source>] [-n <label>] [--herdr]
+wkt new -b <branch> [-s <source>] [-n <name>] [--tmux | --herdr]
 wkt rename -b <new-branch> [-n <label>] [-y]
 wkt setup <repo-url>
 wkt adopt
@@ -113,13 +115,14 @@ Run it anywhere in a repository: the main checkout, any worktree, or the top of 
 4. `<branch>` exists on origin: create it locally, tracking origin's.
 5. Otherwise, fetch `<source>` from origin and create `<branch>` from it. The new branch doesn't track `<source>`, so the first push needs `git push -u origin HEAD`, or set `push.autoSetupRemote`.
 
-It then prints the worktree's path. With `--herdr`, it also opens the worktree with `herdr worktree open` and focuses it.
+It then prints the worktree's path. With `--tmux`, it also opens the worktree's [tmux session](#tmux), making it if there's none. With `--herdr`, it opens the worktree with `herdr worktree open` and focuses it. Passing both is an error.
 
 | Option | |
 |---|---|
 | `-b <branch>` | Branch to create or open. Also the worktree's folder name. Required |
 | `-s <source>` | Branch to start a new branch from. Defaults to the repository's default branch: origin's `HEAD`, else `main` or `master` |
-| `-n <label>` | Label for the Herdr workspace. Without it, Herdr picks one |
+| `-n <name>` | With `--tmux`, the session's name, instead of `<repo>/<branch>`. With `--herdr`, the workspace's label; without it, Herdr picks one |
+| `--tmux` | Open the worktree's tmux session and switch to it. Outside tmux, print how to attach to it instead |
 | `--herdr` | Open the worktree as a Herdr workspace and focus it |
 
 ### `wkt rename`
@@ -202,6 +205,44 @@ $WKT_ROOT/<org>/<repo>/<branch>
 
 `WKT_ROOT` defaults to `~/.herdr/worktrees`, the folder Herdr's own `worktrees.directory` setting uses by default, so worktrees you make from Herdr's sidebar and from wkt end up side by side. If you've changed Herdr's setting, or don't use Herdr, set `WKT_ROOT` to wherever you want them.
 
+## tmux
+
+`wkt new --tmux` gives the worktree its own tmux session. If the worktree already has one, wkt uses it. Otherwise it makes one, detached, starting in the worktree's folder, and tags it with the worktree's path. If no tmux server is running, making the session starts one.
+
+- **Inside tmux**, when `$TMUX` is set, wkt switches your client to the session.
+- **Outside tmux**, it switches nothing and prints how to attach:
+
+```console
+$ wkt new -b fix-login --tmux
+→ updating main from origin
+→ branching from origin/main
+✓ fix-login  ~/.herdr/worktrees/acme/widget/fix-login  opened in tmux
+→ attach with: tmux attach -t widget/fix-login
+```
+
+### Session names
+
+A session is named `<repo>/<branch>`, like `widget/fix-login`, so tmux's status bar says which repository you're in. `<repo>` is the name from origin's URL that normal clones' [paths](#where-worktrees-go) use, and `.bare` layouts use it too. Without an origin, it's the repository's folder: the clone, or the folder that holds `.bare`. tmux reads `.` and `:` in a target as separators, so they become `-`: branch `v1.2` gives `widget/v1-2`.
+
+If a session that isn't this worktree's already has the name, wkt uses `<org>/<repo>/<branch>`, like `acme/widget/fix-login`. If that's taken too, it adds `-2`, `-3` and so on. `-n <name>` chooses the name yourself, with the same `-2` rule. It only names a new session; one that already exists keeps its name.
+
+### Finding a worktree's session
+
+Every session wkt makes has the session option `@wkt-worktree` set to the worktree's absolute path, with symlinks resolved. A worktree's session is, in order:
+
+1. The session whose `@wkt-worktree` is the worktree's path.
+2. Otherwise, a session whose `session_path`, with symlinks resolved, is the worktree's folder or a folder inside it.
+
+The second rule is for sessions restored by [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect), which doesn't save `@` options and recreates each session with its first pane's folder as `session_path`.
+
+Other tools, such as a session switcher, can match sessions to worktrees with the same rule. One query gets all it needs:
+
+```sh
+tmux list-sessions -F $'#{session_name}\t#{@wkt-worktree}\t#{session_path}'
+```
+
+Target a session by its exact name, as in `tmux switch-client -t '=widget/fix-login'`. Without the `=`, tmux falls back to a prefix match, so `widget/fix-login` could reach `widget/fix-login-2`. Commands that take a pane, like `set-option`, need a `:` after it: `-t '=widget/fix-login:'`.
+
 ## Configuration
 
 wkt has no config file. It reads these environment variables:
@@ -223,7 +264,7 @@ export WKT_ROOT=~/src/worktrees
 
 | Status | |
 |---|---|
-| `0` | Done. This includes when Herdr couldn't be reached, which only warns |
+| `0` | Done. This includes when tmux or Herdr couldn't be reached, which only warns |
 | `2` | Bad arguments, or plain `wkt` without a terminal |
 | `130` | The picker was closed with `Esc` |
 | Anything else | Something went wrong, such as not being in a repository or a folder in the way. A failing git command passes on its own status |
@@ -240,7 +281,7 @@ bats test
 zsh -n bin/wkt
 ```
 
-The tests use [bats](https://github.com/bats-core/bats-core). Each one runs in a temporary folder against a local bare repository standing in for origin, with a throwaway `HOME`, every `HERDR_*` variable removed except a dummy `HERDR_TAB_ID`, so they also show wkt opens nothing in Herdr unasked, and stub `herdr`, `gh`, `fzf` and `defaults` commands first on `PATH`. They never touch a running Herdr, GitHub, your terminal or your own repositories. The stub `herdr` records its arguments, so the tests check exactly what wkt asks Herdr to do. The stub `fzf` records what it was given and plays back answers each test scripts, and fails loudly when a test didn't expect a call.
+The tests use [bats](https://github.com/bats-core/bats-core). Each one runs in a temporary folder against a local bare repository standing in for origin, with a throwaway `HOME`, every `HERDR_*` variable removed except a dummy `HERDR_TAB_ID`, so they also show wkt opens nothing in Herdr unasked, `TMUX` and `TMUX_PANE` removed, and stub `herdr`, `tmux`, `gh`, `fzf` and `defaults` commands first on `PATH`. They never touch a running Herdr or tmux server, GitHub, your terminal or your own repositories. The stub `herdr` and `tmux` record their arguments, so the tests check exactly what wkt asks of them. The stub `fzf` records what it was given and plays back answers each test scripts, and fails loudly when a test didn't expect a call.
 
 `contrib/wkt.rb` is the Homebrew formula.
 
