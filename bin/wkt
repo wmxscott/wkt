@@ -45,7 +45,8 @@ usage() {
 Usage: $PROG <command> [options]
 
 Git worktrees in a .bare layout. With --herdr, a new or picked worktree
-opens as a Herdr workspace, and rename keeps an open workspace in step.
+opens as a Herdr workspace, and rename keeps an open workspace in step. With
+--tmux, new opens it as a tmux session.
 
 Commands:
   (no command) [--herdr]          Pick or create a worktree (needs fzf) and
@@ -54,9 +55,9 @@ Commands:
                                   in the current (empty) directory
   adopt                           Turn the current clone into a .bare worktree
                                   layout in place
-  new -b <branch> [-s <source>] [-n <label>] [--herdr]
+  new -b <branch> [-s <source>] [-n <name>] [--tmux | --herdr]
                                   Create or reopen the worktree for <branch>,
-                                  and with --herdr open it in Herdr
+                                  and with --tmux or --herdr open it there
   rename -b <new-branch> [-n <label>] [-y]
                                   Rename the current worktree's branch,
                                   directory and Herdr workspace
@@ -95,7 +96,7 @@ EOF
 
 usage_new() {
     cat <<EOF
-Usage: $PROG new -b <branch> [-s <source>] [-n <label>] [--herdr]
+Usage: $PROG new -b <branch> [-s <source>] [-n <name>] [--tmux | --herdr]
 
 Create the worktree for <branch>, or reuse it if it exists, and print its
 path. A new branch is created from <source> unless it already exists locally
@@ -105,7 +106,10 @@ Options:
   -b <branch>   Branch to create or open; also the worktree directory name
   -s <source>   Branch to start a new branch from (default: the repo's
                 default branch)
-  -n <label>    Herdr workspace label (default: chosen by Herdr)
+  -n <name>     With --tmux, the session name (default: <repo>/<branch>);
+                with --herdr, the workspace label (default: chosen by Herdr)
+  --tmux        Open the worktree as a tmux session and switch to it, or
+                outside tmux, print how to attach to it
   --herdr       Open the worktree as a Herdr workspace and focus it
   -h, --help    Show this help
 EOF
@@ -148,12 +152,14 @@ take_open_flags() {
     OPEN_IN= ARGS=()
     for arg in "$@"; do
         case $arg in
-            --herdr | --tmux ) OPEN_IN=${arg#--} ;;
+            --herdr | --tmux )
+                [[ -z $OPEN_IN || $OPEN_IN == ${arg#--} ]] ||
+                    usage_error "$cmd" "--tmux and --herdr can't be used together."
+                OPEN_IN=${arg#--} ;;
             --no-herdr ) ;;
             * ) ARGS+=("$arg") ;;
         esac
     done
-    [[ $OPEN_IN != tmux ]] || usage_error "$cmd" "--tmux isn't supported yet."
 }
 
 # Print $1 relative to $2 (both resolved to absolute paths first).
@@ -305,6 +311,95 @@ herdr_paths() {
         found=${json%%'"'*}
         [[ -z $found ]] || HERDR_PATHS[${found:A}]=1
     done
+}
+
+# tmux_sessions: fill TMUX_NAMES, TMUX_TAGS and TMUX_DIRS with each tmux
+# session's name, @wkt-worktree and session_path. Empty if tmux isn't
+# installed or no server is running.
+typeset -ga TMUX_NAMES TMUX_TAGS TMUX_DIRS
+tmux_sessions() {
+    TMUX_NAMES=() TMUX_TAGS=() TMUX_DIRS=()
+    local line
+    local -a row
+    for line in ${(f)"$(tmux list-sessions -F $'#{session_name}\t#{@wkt-worktree}\t#{session_path}' 2>/dev/null || true)"}; do
+        row=("${(@ps:\t:)line}")
+        TMUX_NAMES+=("${row[1]}") TMUX_TAGS+=("${row[2]-}") TMUX_DIRS+=("${${row[3]-}:A}")
+    done
+}
+
+# tmux_find <worktree-path>: the worktree's session, in REPLY: the one tagged
+# with its path, else one whose folder is the worktree or inside it, which is
+# all tmux-resurrect leaves of a session. Needs tmux_sessions first.
+tmux_find() {
+    local wt=$1 i=${TMUX_TAGS[(Ie)$1]}
+    if (( ! i )); then
+        for (( i = 1; i <= ${#TMUX_DIRS}; i++ )); do
+            [[ ${TMUX_DIRS[i]} == ($wt|$wt/*) ]] && break
+        done
+        (( i <= ${#TMUX_DIRS} )) || return 1
+    fi
+    REPLY=${TMUX_NAMES[i]}
+}
+
+# tmux_free <name> <worktree-path>: true unless a session other than the
+# worktree's own has the name.
+tmux_free() {
+    local i=${TMUX_NAMES[(Ie)$1]}
+    (( ! i )) || [[ ${TMUX_TAGS[i]} == $2 || ${TMUX_DIRS[i]} == ($2|$2/*) ]]
+}
+
+# tmux_name <worktree-path> <branch> [<name>]: the session name for the
+# worktree, in REPLY: <name>, else <repo>/<branch>, else <org>/<repo>/<branch>
+# if another session has that, then with -2, -3 and so on until it's free.
+# tmux reads . and : in a target as separators, so they become -. Needs
+# tmux_sessions first.
+tmux_name() {
+    local wt=$1 name=${3-} n=1
+    if [[ -z $name ]]; then
+        org_repo "$(common_git_dir)"
+        name=$REPO_NAME/$2
+        tmux_free "${name//[.:]/-}" "$wt" || name=$REPO_ORG/$name
+    fi
+    name=${name//[.:]/-}
+    REPLY=$name
+    while ! tmux_free "$REPLY" "$wt"; do
+        REPLY=$name-$(( ++n ))
+    done
+}
+
+# tmux_open <worktree-path> <branch> [<name>]: switch to the worktree's tmux
+# session, making and tagging it first if there's none. Outside tmux, it
+# leaves the session to attach to in TMUX_ATTACH instead. What it did goes in
+# REPLY. The git work is already done, so a missing or failing tmux only
+# warns; the status says whether it opened.
+typeset -g TMUX_ATTACH=
+tmux_open() {
+    local wt=${1:A} name did err
+    if ! command -v tmux >/dev/null 2>&1; then
+        warn "tmux not found on PATH; skipped opening the worktree in tmux."
+        return 1
+    fi
+    tmux_sessions
+    if tmux_find "$wt"; then
+        name=$REPLY did="switched to $REPLY"
+    else
+        tmux_name "$wt" "$2" "${3-}"
+        name=$REPLY did="opened in tmux"
+        # set-option takes a pane, which an exact =<name> only finds with a :.
+        if ! err=$(tmux new-session -d -s "$name" -c "$wt" 2>&1 >/dev/null &&
+            tmux set-option -t "=$name:" @wkt-worktree "$wt" 2>&1 >/dev/null); then
+            warn "tmux didn't open the worktree${err:+: ${err%%$'\n'*}}"
+            return 1
+        fi
+    fi
+    if [[ -z ${TMUX-} ]]; then
+        [[ $did == opened* ]] || did="already open in tmux"
+        TMUX_ATTACH=$name
+    elif ! err=$(tmux switch-client -t "=$name" 2>&1 >/dev/null); then
+        warn "tmux didn't switch to $name${err:+: ${err%%$'\n'*}}"
+        return 1
+    fi
+    REPLY=$did
 }
 
 cmd_setup() {
@@ -510,10 +605,12 @@ cmd_new() {
         git worktree add --no-track -b "$new_branch" "$target_path" "$base_ref" >/dev/null
     fi
 
-    local herdr_note="" opened=0
+    local open_note="" opened=0
     if [[ $OPEN_IN == herdr ]] && herdr_open "$common_dir" "$target_path" "$label" --focus; then
-        herdr_note="  ${OUT_BLUE}opened in Herdr${OUT_RESET}"
+        open_note="  ${OUT_BLUE}opened in Herdr${OUT_RESET}"
         opened=1
+    elif [[ $OPEN_IN == tmux ]] && tmux_open "$target_path" "$new_branch" "$label"; then
+        open_note="  ${OUT_BLUE}${REPLY}${OUT_RESET}"
     fi
 
     local display_path
@@ -523,7 +620,8 @@ cmd_new() {
         display_path=$(tildify "$target_path")
     fi
 
-    print -r -- "${OUT_GREEN}✓${OUT_RESET} ${new_branch}${label:+ ($label)}  ${display_path}${herdr_note}"
+    print -r -- "${OUT_GREEN}✓${OUT_RESET} ${new_branch}${label:+ ($label)}  ${display_path}${open_note}"
+    [[ -z $TMUX_ATTACH ]] || step "attach with: tmux attach -t ${(q-)TMUX_ATTACH}"
     typeset -g WKT_PATH=$target_path WKT_HERDR_OPENED=$opened
 }
 
@@ -1065,6 +1163,7 @@ ui_new() {
 cmd_ui() {
     wants_help "$@" && { usage; exit 0; }
     take_open_flags "" "$@"
+    [[ $OPEN_IN != tmux ]] || usage_error "" "--tmux isn't supported yet."
     if (( ${#ARGS} )); then
         [[ ${ARGS[1]} == -* ]] && usage_error "" "Unknown option: ${ARGS[1]}"
         usage_error "" "Unexpected argument: ${ARGS[1]}"

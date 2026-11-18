@@ -173,6 +173,15 @@ herdr_calls() { cat "$STUB_HERDR_LOG" 2>/dev/null || true; }
 
 tmux_calls() { cat "$STUB_TMUX_LOG" 2>/dev/null || true; }
 
+# sessions <name> <tag> <path>...: tmux's list-sessions reply, a row of
+# session name, @wkt-worktree and session_path for every three arguments.
+sessions() {
+    while [ $# -ge 3 ]; do
+        printf '%s\t%s\t%s\n' "$1" "$2" "$3"
+        shift 3
+    done
+}
+
 # workspaces <path>...: herdr's 'workspace list' reply, with a workspace per
 # path and one without a worktree.
 workspaces() {

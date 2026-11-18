@@ -2,6 +2,8 @@
 
 load test_helper
 
+LIST=$'list-sessions -F #{session_name}\t#{@wkt-worktree}\t#{session_path}'
+
 setup() {
     common_setup
     make_origin
@@ -319,13 +321,15 @@ setup() {
     [ "$(herdr_calls)" = "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/other --focus" ]
 }
 
-@test "--tmux isn't supported yet" {
+@test "--tmux and --herdr together: usage error, nothing made" {
     make_layout
     cd "$LAYOUT/main"
-    run wkt new -b topic --tmux
+    run wkt new -b topic --tmux --herdr
     [ "$status" -eq 2 ]
-    contains "$output" "--tmux isn't supported yet"
+    contains "$output" "--tmux and --herdr can't be used together."
     [ ! -e "$LAYOUT/topic" ]
+    [ -z "$(herdr_calls)" ]
+    [ -z "$(tmux_calls)" ]
 }
 
 @test "without herdr on PATH: worktree is made, warning, exit 0" {
@@ -350,4 +354,173 @@ setup() {
     contains "$stderr" "Herdr didn't open the worktree: {\"error\":\"server not running\"}"
     contains "$stderr" "herdr worktree open --cwd $LAYOUT/.bare --path $LAYOUT/topic --label 'My label' --focus"
     [ "$(last_line)" = "✓ topic (My label)  ../topic" ]
+}
+
+# --- tmux ------------------------------------------------------------------
+
+@test "--tmux outside tmux: makes a tagged session and says how to attach" {
+    make_layout
+    cd "$LAYOUT/main"
+    run wkt new -b topic --tmux
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "new-session -d -s widget/topic -c $LAYOUT/topic" \
+        "set-option -t =widget/topic: @wkt-worktree $LAYOUT/topic")" ]
+    contains "$output" "✓ topic  ../topic  opened in tmux"
+    [ "$(last_line)" = "→ attach with: tmux attach -t widget/topic" ]
+}
+
+@test "--tmux inside tmux: makes a tagged session and switches to it" {
+    make_layout
+    cd "$LAYOUT/main"
+    TMUX=stub run wkt new -b topic --tmux
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "new-session -d -s widget/topic -c $LAYOUT/topic" \
+        "set-option -t =widget/topic: @wkt-worktree $LAYOUT/topic" \
+        "switch-client -t =widget/topic")" ]
+    [ "$(last_line)" = "✓ topic  ../topic  opened in tmux" ]
+}
+
+@test "--tmux: the session tagged with the worktree comes first" {
+    make_layout
+    cd "$LAYOUT/main"
+    STUB_TMUX_SESSIONS="$(sessions \
+        widget/topic "" "$LAYOUT/topic" \
+        mine "$LAYOUT/topic" "$TMP")"
+    export STUB_TMUX_SESSIONS
+    TMUX=stub run wkt new -b topic --tmux
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" "switch-client -t =mine")" ]
+    [ "$(last_line)" = "✓ topic  ../topic  switched to mine" ]
+}
+
+@test "--tmux: a restored session, untagged, is found by its folder" {
+    make_layout
+    ln -s "$LAYOUT" "$TMP/link"
+    cd "$LAYOUT/main"
+    STUB_TMUX_SESSIONS="$(sessions \
+        widget/topic-long "" "$LAYOUT/topic-long" \
+        widget/topic "" "$TMP/link/topic/src")"
+    export STUB_TMUX_SESSIONS
+    TMUX=stub run wkt new -b topic --tmux
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" "switch-client -t =widget/topic")" ]
+    [ "$(last_line)" = "✓ topic  ../topic  switched to widget/topic" ]
+
+    : >"$STUB_TMUX_LOG"
+    STUB_TMUX_SESSIONS="$(sessions restored "" "$LAYOUT/topic")" TMUX=stub run wkt new -b topic --tmux
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" "switch-client -t =restored")" ]
+}
+
+@test "--tmux outside tmux: an existing session is left alone, with how to attach" {
+    make_layout
+    cd "$LAYOUT/main"
+    STUB_TMUX_SESSIONS="$(sessions widget/topic "$LAYOUT/topic" "$LAYOUT/topic")"
+    export STUB_TMUX_SESSIONS
+    run wkt new -b topic --tmux
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$LIST" ]
+    contains "$output" "✓ topic  ../topic  already open in tmux"
+    [ "$(last_line)" = "→ attach with: tmux attach -t widget/topic" ]
+}
+
+@test "--tmux: a name another session has falls back to <org>/<repo>/<branch>, then -2" {
+    make_layout
+    cd "$LAYOUT/main"
+    STUB_TMUX_SESSIONS="$(sessions widget/topic "$TMP/other" "$TMP/other")" run wkt new -b topic --tmux
+    [ "$status" -eq 0 ]
+    contains "$(tmux_calls)" "new-session -d -s acme/widget/topic -c $LAYOUT/topic"
+    contains "$(tmux_calls)" "set-option -t =acme/widget/topic: @wkt-worktree $LAYOUT/topic"
+    [ "$(last_line)" = "→ attach with: tmux attach -t acme/widget/topic" ]
+
+    : >"$STUB_TMUX_LOG"
+    STUB_TMUX_SESSIONS="$(sessions \
+        widget/topic "" "$TMP" \
+        acme/widget/topic "$TMP/other" "$TMP/other")"
+    export STUB_TMUX_SESSIONS
+    run wkt new -b topic --tmux
+    [ "$status" -eq 0 ]
+    contains "$(tmux_calls)" "new-session -d -s acme/widget/topic-2 -c $LAYOUT/topic"
+
+    : >"$STUB_TMUX_LOG"
+    STUB_TMUX_SESSIONS+=$'\n'"$(sessions acme/widget/topic-2 "" "$HOME")"
+    run wkt new -b topic --tmux
+    [ "$status" -eq 0 ]
+    contains "$(tmux_calls)" "new-session -d -s acme/widget/topic-3 -c $LAYOUT/topic"
+}
+
+@test "--tmux -n names the session" {
+    make_layout
+    cd "$LAYOUT/main"
+    run wkt new -b topic -n "Login page.v2" --tmux
+    [ "$status" -eq 0 ]
+    contains "$(tmux_calls)" "new-session -d -s Login page-v2 -c $LAYOUT/topic"
+    contains "$output" "✓ topic (Login page.v2)  ../topic  opened in tmux"
+    [ "$(last_line)" = "→ attach with: tmux attach -t 'Login page-v2'" ]
+
+    : >"$STUB_TMUX_LOG"
+    STUB_TMUX_SESSIONS="$(sessions mine "$TMP" "$TMP")" run wkt new -b other -n mine --tmux
+    [ "$status" -eq 0 ]
+    contains "$(tmux_calls)" "new-session -d -s mine-2 -c $LAYOUT/other"
+}
+
+@test "--tmux in a normal clone: <repo> and <org> come from origin's URL, . becomes -" {
+    make_clone
+    mkdir -p "$TMP/remotes/some.org"
+    cp -R "$ORIGIN" "$TMP/remotes/some.org/my.site.git"
+    cd "$CLONE"
+    git remote set-url origin "$TMP/remotes/some.org/my.site.git"
+    run wkt new -b v1.2 -s main --tmux
+    [ "$status" -eq 0 ]
+    wt="$HOME/.herdr/worktrees/some.org/my.site/v1.2"
+    contains "$(tmux_calls)" "new-session -d -s my-site/v1-2 -c $wt"
+
+    : >"$STUB_TMUX_LOG"
+    STUB_TMUX_SESSIONS="$(sessions my-site/v1-2 "" "$TMP")" run wkt new -b v1.2 --tmux
+    [ "$status" -eq 0 ]
+    contains "$(tmux_calls)" "new-session -d -s some-org/my-site/v1-2 -c $wt"
+}
+
+@test "--tmux in a .bare layout without origin: <repo> is the layout's folder" {
+    make_layout
+    git -C "$LAYOUT" remote remove origin
+    cd "$LAYOUT/main"
+    run wkt new -b topic -s main --tmux
+    [ "$status" -eq 0 ]
+    contains "$(tmux_calls)" "new-session -d -s layout/topic -c $LAYOUT/topic"
+}
+
+@test "--tmux without tmux on PATH: worktree is made, warning, exit 0" {
+    rm "$STUB_BIN/tmux"
+    run command -v tmux
+    [ "$status" -ne 0 ]
+    make_layout
+    cd "$LAYOUT/main"
+    TMUX=stub run --separate-stderr wkt new --tmux -b topic
+    [ "$status" -eq 0 ]
+    [ -d "$LAYOUT/topic" ]
+    contains "$stderr" "tmux not found on PATH"
+    [ "$(last_line)" = "✓ topic  ../topic" ]
+}
+
+@test "--tmux when tmux fails: worktree is made, warning, exit 0" {
+    make_layout
+    cd "$LAYOUT/main"
+    STUB_TMUX_FAIL=1 run --separate-stderr wkt new --tmux -b topic
+    [ "$status" -eq 0 ]
+    [ -d "$LAYOUT/topic" ]
+    contains "$stderr" "tmux didn't open the worktree: stub tmux: new-session failed"
+    [ "$(last_line)" = "✓ topic  ../topic" ]
+    lacks "$(tmux_calls)" "set-option"
+}
+
+@test "--tmux when switching fails: warning, exit 0" {
+    make_layout
+    cd "$LAYOUT/main"
+    TMUX=stub STUB_TMUX_FAIL=switch-client run --separate-stderr wkt new --tmux -b topic
+    [ "$status" -eq 0 ]
+    contains "$stderr" "tmux didn't switch to widget/topic: stub tmux: switch-client failed"
+    [ "$(last_line)" = "✓ topic  ../topic" ]
 }
