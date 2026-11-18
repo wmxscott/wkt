@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | in progress · next: A3 |
+| **Status** | in progress · next: A4 |
 | **Updated** | 2026-11-17 |
 | **Tracker** | — |
 | **Related** | [approved design](../superpowers/specs/2026-11-17-tmux-mode-design.md); tmux core design in `wmxscott/dotfiles`, `docs/superpowers/specs/2026-11-16-tmux-core-design.md` |
@@ -410,3 +410,4 @@ Ask of every PR:
 - 2026-11-17: plan amended. Added S18 and Stack C, to remove `--no-herdr` in 2.1.0 once the skills and docket stop passing it, as the user asked.
 - 2026-11-17: phase A1 landed as #10.
 - 2026-11-17: phase A2 landed as #11. Plan amended with S19 and the Tag line, for the `=<name>:` target that A2 found.
+- 2026-11-17: phase A3 landed as #12. tmux 3.8 can't change `session_path` cleanly, so a renamed session keeps its old starting folder and the tag carries the new path, as the Renaming contract allowed.
