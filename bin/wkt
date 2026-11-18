@@ -144,10 +144,11 @@ Usage: $PROG rm [-b <branch>] [-f]
 
 Remove the worktree you're in, or the one that has <branch> checked out.
 Close its Herdr workspace and tmux session, if it has them, switching to
-another session first if you're in that one. Delete the local branch if its
-pull request was merged or the default branch already has it; the branch on
-origin is never touched. The main checkout and the default branch's worktree
-can't be removed.
+another session first if you're in that one. Delete the local branch if
+nothing on it would be lost: the default branch already has it, or its pull
+request was merged with all of its commits. The branch on origin is never
+touched. The main checkout and the default branch's worktree can't be
+removed.
 
 Options:
   -b <branch>   Remove the worktree that has <branch> checked out
@@ -927,23 +928,22 @@ cmd_rm() {
                 "Commit, stash or delete them, or pass -f to remove it anyway."
     fi
 
-    local base=refs/heads/$default head in_base=0 pr="" state="" oid="" ahead
+    local base=refs/heads/$default head merged=0 pr="" state="" oid="" ahead
     git remote get-url origin >/dev/null 2>&1 && base=refs/remotes/origin/$default
     head=$(git -C "$wt" rev-parse HEAD)
     if git merge-base --is-ancestor "$head" "$base" 2>/dev/null; then
-        in_base=1
+        merged=1
     elif [[ -n $branch ]] && command -v gh >/dev/null 2>&1; then
         # Asked before the folder goes, as gh may be running from it.
         pr=$(gh pr view "$branch" --json state,headRefOid --jq '[.state,.headRefOid]|@tsv' 2>/dev/null || true)
         IFS=$'\t' read -r state oid <<<"$pr" || true
+        ! in_merged_pr "$head" "$state" "$oid" || merged=1
     fi
-    if (( ! force && ! in_base )) && ! in_merged_pr "$head" "$state" "$oid"; then
+    if (( ! force && ! merged )); then
         ahead=$(unpushed "$wt" "$default")
         [[ -z $ahead ]] ||
             die "'$label' has commits that were never pushed." "Push them, or pass -f to remove it anyway."
     fi
-    local merged=$in_base
-    [[ $state != MERGED ]] || merged=1
 
     local home ws session=""
     home=$(main_worktree "$common_dir" "$default")
@@ -965,6 +965,8 @@ cmd_rm() {
     if [[ -n $branch ]] && (( merged )); then
         git branch -D "$branch" >/dev/null
         notes="  ${OUT_BLUE}branch deleted${OUT_RESET}"
+    elif [[ $state == MERGED ]]; then
+        notes="  ${OUT_BLUE}branch kept: has commits not in the merged PR${OUT_RESET}"
     elif [[ -n $branch ]]; then
         notes="  ${OUT_BLUE}branch kept: not merged into ${base#refs/*/}${OUT_RESET}"
     fi

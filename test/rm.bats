@@ -202,6 +202,19 @@ gone_upstream() {
     [ "$(cat "$STUB_GH_LOG")" = "$GH_VIEW" ]
 }
 
+@test "-f with a commit beyond the merged PR's head: removes the folder, keeps the branch" {
+    local head
+    commit
+    gone_upstream
+    head=$(rev . HEAD)
+    commit "after"
+    STUB_GH_PR=$(pr MERGED "$head") run wkt rm -f
+    [ "$status" -eq 0 ]
+    [ ! -e "$LAYOUT/topic" ]
+    has_branch topic
+    contains "${lines[0]}" "branch kept: has commits not in the merged PR"
+}
+
 @test "merged, with a PR head that isn't here and isn't HEAD: refused" {
     commit
     gone_upstream
