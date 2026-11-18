@@ -65,6 +65,8 @@ Commands:
   rm [-b <branch>] [-f]           Remove the current worktree, or <branch>'s,
                                   with its Herdr workspace and tmux session,
                                   and its branch if merged
+  rm --merged [-y]                Remove every worktree whose branch is
+                                  merged, after asking
 
 Options:
   -h, --help                      Show this help, or '$PROG <command> --help'
@@ -141,6 +143,7 @@ EOF
 usage_rm() {
     cat <<EOF
 Usage: $PROG rm [-b <branch>] [-f]
+       $PROG rm --merged [-y]
 
 Remove the worktree you're in, or the one that has <branch> checked out.
 Close its Herdr workspace and tmux session, if it has them, switching to
@@ -150,10 +153,17 @@ request was merged with all of its commits. The branch on origin is never
 touched. The main checkout and the default branch's worktree can't be
 removed.
 
+With --merged, list every worktree in the repository whose branch nothing
+would be lost from, ask, then remove each of them that way, the one whose
+tmux session you're in last. Those with uncommitted changes or untracked
+files are skipped and listed.
+
 Options:
   -b <branch>   Remove the worktree that has <branch> checked out
   -f            Remove it even with uncommitted changes, untracked files or
                 commits that were never pushed
+  --merged      Remove every merged worktree, as above
+  -y            With --merged, don't ask first
   -h, --help    Show this help
 EOF
 }
@@ -467,6 +477,15 @@ tmux_leave() {
     fi
 }
 
+# tmux_kill [<session>]: kill the session, if one is named. A failing tmux
+# only warns.
+tmux_kill() {
+    local err
+    [[ -n ${1-} ]] || return 0
+    err=$(tmux kill-session -t "=$1" 2>&1 >/dev/null) ||
+        warn "tmux didn't close session $1${err:+: ${err%%$'\n'*}}"
+}
+
 # unpushed <worktree-path> <default-branch>: the commits at the worktree's
 # HEAD that were never pushed: those not on its upstream, else not on origin,
 # else, with no origin, not on the local default branch.
@@ -488,6 +507,22 @@ unpushed() {
 # doesn't count.
 in_merged_pr() {
     [[ $2 == MERGED ]] && git merge-base --is-ancestor "$1" "$3" 2>/dev/null
+}
+
+# is_merged <worktree-path> <branch> <base-ref>: true if nothing at the
+# worktree's HEAD would be lost with its branch: <base-ref> has it, or the
+# branch's merged pull request does. Asks gh only when <base-ref> doesn't,
+# and leaves the pull request's state in PR_STATE.
+typeset -g PR_STATE=
+is_merged() {
+    local head pr oid
+    PR_STATE=
+    head=$(git -C "$1" rev-parse HEAD)
+    git merge-base --is-ancestor "$head" "$3" 2>/dev/null && return 0
+    [[ -n $2 ]] && command -v gh >/dev/null 2>&1 || return 1
+    pr=$(gh pr view "$2" --json state,headRefOid --jq '[.state,.headRefOid]|@tsv' 2>/dev/null || true)
+    IFS=$'\t' read -r PR_STATE oid <<<"$pr" || true
+    in_merged_pr "$head" "$PR_STATE" "$oid"
 }
 
 # main_worktree <common-git-dir> <default-branch>: where to go when a worktree
@@ -881,18 +916,167 @@ cmd_rename() {
     print -r -- "${OUT_YELLOW}→${OUT_RESET} your shell is still in the old directory; run: cd ${(q-)new_path}"
 }
 
+# rm_worktree <worktree-path> <branch> <force> <common-git-dir> <home> [<why-kept>]:
+# remove the worktree and the folders it leaves empty, delete its branch
+# unless given a reason to keep it, close its Herdr workspace, leave its tmux
+# session if you're in it, and print what went. If git can't remove it, it
+# stops there with git's status. The session is left in RM_SESSION for the
+# caller to kill after all output; RM_MOVED says whether the client moved.
+typeset -g RM_SESSION= RM_MOVED=0
+rm_worktree() {
+    local wt=$1 branch=$2 force=$3 common_dir=$4 home=$5 kept=${6-}
+    local ws session="" notes="" err target
+    RM_SESSION= RM_MOVED=0
+    herdr_paths
+    ws=${HERDR_PATHS[$wt]-}
+    tmux_sessions
+    if tmux_find "$wt"; then
+        session=$REPLY
+    fi
+    # Later git and tmux calls need a current folder that outlives the worktree.
+    cd "$common_dir"
+
+    # rm --merged calls this with err_exit off, so git's failures return here.
+    local -a remove=(worktree remove)
+    (( ! force )) || remove+=(--force)
+    git "${remove[@]}" "$wt" || return
+    drop_empty_dirs "$wt" "$branch"
+
+    if [[ -n $branch && -z $kept ]]; then
+        git branch -D "$branch" >/dev/null || return
+        notes="  ${OUT_BLUE}branch deleted${OUT_RESET}"
+    elif [[ -n $branch ]]; then
+        notes="  ${OUT_BLUE}branch kept: ${kept}${OUT_RESET}"
+    fi
+
+    if [[ -n $ws ]]; then
+        if err=$(herdr workspace close "$ws" 2>&1 >/dev/null); then
+            notes+="  ${OUT_BLUE}Herdr workspace closed${OUT_RESET}"
+        else
+            warn "Herdr didn't close the workspace${err:+: ${err%%$'\n'*}}"
+            print -ru2 -- "  To close it by hand: herdr workspace close ${(q-)ws}"
+        fi
+    fi
+
+    if [[ -n $session && -n ${TMUX-} ]] &&
+        [[ "$(tmux display-message -p '#{session_name}' 2>/dev/null || true)" == "$session" ]]; then
+        if tmux_leave "$session" "$home"; then
+            RM_MOVED=1
+        else
+            target="=$session"
+            print -ru2 -- "  Left $session open; to close it: tmux kill-session -t ${(q-)target}"
+            session=""
+        fi
+    fi
+    [[ -z $session ]] || notes+="  ${OUT_BLUE}tmux session ${session} closed${OUT_RESET}"
+
+    print -r -- "${OUT_GREEN}✓${OUT_RESET} removed ${branch:-${wt:t}}  $(tildify "$wt")${notes}"
+    RM_SESSION=$session
+}
+
+# rm_merged <yes> <common-git-dir> <default-branch> <base-ref> <home>: list
+# every worktree on a branch that is_merged passes, apart from the main
+# checkout and the default branch's, skipping those with changes. Ask unless
+# <yes>, then remove each with rm_worktree, the one whose tmux session you're
+# in last. Exits 1 if any failed.
+rm_merged() {
+    local yes=$1 common_dir=$2 default=$3 base=$4 home=$5
+    local -a lines=("${(@f)$(git worktree list --porcelain)}") go=() go_b=() skip=() skip_b=()
+    local main=${${lines[1]#worktree }:A} here line wt="" branch i
+    here=$(git rev-parse --show-toplevel 2>/dev/null || true)
+    [[ -z $here ]] || here=${here:A}
+    for line in "${lines[@]}"; do
+        case $line in
+            "worktree "* ) wt=${${line#worktree }:A} ;;
+            "branch refs/heads/"* )
+                branch=${line#branch refs/heads/}
+                [[ $wt != "$main" && $branch != "$default" && -d $wt ]] || continue
+                is_merged "$wt" "$branch" "$base" || continue
+                if [[ -z "$(git -C "$wt" status --porcelain)" ]]; then
+                    go+=("$wt") go_b+=("$branch")
+                else
+                    skip+=("$wt") skip_b+=("$branch")
+                fi ;;
+        esac
+    done
+
+    local n=${#go} s=s reply="" current removed=0 failed=0 gone_here=0 last=""
+    if (( n )); then
+        print -r -- "Merged worktrees to remove:"
+        for (( i = 1; i <= n; i++ )); do
+            print -r -- "  ${go_b[i]}  $(tildify "${go[i]}")"
+        done
+    else
+        print -r -- "No merged worktrees to remove."
+    fi
+    (( ! ${#skip} )) || print -r -- "Skipping:"
+    for (( i = 1; i <= ${#skip}; i++ )); do
+        print -r -- "  ${skip_b[i]}  $(tildify "${skip[i]}")  (uncommitted changes or untracked files)"
+    done
+    (( n )) || return 0
+
+    (( n > 1 )) || s=
+    if (( ! yes )); then
+        [[ -t 0 || -n ${WKT_ASSUME_TTY-} ]] ||
+            die "No terminal to confirm; pass -y to remove them. Nothing was changed."
+        printf "Remove %d merged worktree%s? [y/N] " "$n" "$s" >&2
+        read -r reply || true
+        [[ $reply == [yY]* ]] || die "Aborted. Nothing was changed."
+    fi
+
+    if [[ -n ${TMUX-} ]] && (( n > 1 )); then
+        current=$(tmux display-message -p '#{session_name}' 2>/dev/null || true)
+        tmux_sessions
+        for (( i = 1; i < n; i++ )); do
+            tmux_find "${go[i]}" && [[ $REPLY == "$current" ]] || continue
+            go+=("${go[i]}") go_b+=("${go_b[i]}")
+            go[i]=() go_b[i]=()
+            break
+        done
+    fi
+
+    for (( i = 1; i <= n; i++ )); do
+        if rm_worktree "${go[i]}" "${go_b[i]}" 0 "$common_dir" "$home"; then
+            (( ++removed ))
+            [[ ${go[i]} != "$here" ]] || (( RM_MOVED )) || gone_here=1
+            if (( RM_MOVED )); then last=$RM_SESSION; else tmux_kill "$RM_SESSION"; fi
+        else
+            (( ++failed ))
+            warn "${go_b[i]} wasn't removed; carrying on with the rest."
+        fi
+    done
+
+    local summary="removed $removed"
+    (( ! failed )) || summary+=", failed $failed"
+    summary+=", skipped ${#skip}"
+    if (( failed )); then
+        print -ru2 -- "${ERR_RED}error:${ERR_RESET} $summary"
+    else
+        print -r -- "${OUT_GREEN}✓${OUT_RESET} $summary"
+    fi
+    (( ! gone_here )) || step "your folder is gone; run: cd ${(q-)home}"
+    # Last, after all output: wkt is likely running in this session.
+    tmux_kill "$last"
+    (( ! failed )) || exit 1
+}
+
 cmd_rm() {
     wants_help "$@" && { usage_rm; exit 0; }
     take_open_flags rm "$@"
     [[ -z $OPEN_IN ]] ||
         usage_error rm "rm doesn't take --$OPEN_IN; it closes a worktree's Herdr workspace and tmux session on its own."
     set -- "${ARGS[@]}"
-    local named="" force=0 opt
+    local named="" force=0 all=0 yes=0 opt
+    if (( ${argv[(Ie)--merged]} )); then
+        all=1
+        set -- "${(@)argv:#--merged}"
+    fi
     local OPTIND=1 OPTARG
-    while getopts ":b:fh" opt; do
+    while getopts ":b:fyh" opt; do
         case $opt in
             b ) named=$OPTARG ;;
             f ) force=1 ;;
+            y ) yes=1 ;;
             h ) usage_rm; exit 0 ;;
             : ) usage_error rm "Option -$OPTARG needs a value." ;;
             * ) usage_error rm "Unknown option: -$OPTARG" ;;
@@ -900,11 +1084,25 @@ cmd_rm() {
     done
     shift $(( OPTIND - 1 ))
     [[ $# -gt 0 ]] && usage_error rm "Unexpected argument: $1"
+    if (( all )); then
+        [[ -z $named ]] && (( ! force )) || usage_error rm "--merged can't be used with -b or -f."
+    else
+        (( ! yes )) || usage_error rm "-y only goes with --merged."
+    fi
 
     git rev-parse --git-dir >/dev/null 2>&1 || die "Not inside a Git repository."
-    local common_dir default wt branch=$named git_dir
+    local common_dir default base home
     common_dir=$(common_git_dir)
     default=$(detect_default_branch)
+    base=refs/heads/$default
+    git remote get-url origin >/dev/null 2>&1 && base=refs/remotes/origin/$default
+    home=$(main_worktree "$common_dir" "$default")
+    if (( all )); then
+        rm_merged "$yes" "$common_dir" "$default" "$base" "$home"
+        return
+    fi
+
+    local wt branch=$named git_dir
     if [[ -n $named ]]; then
         wt=$(worktree_for_branch "$named" || true)
         [[ -n $wt ]] || die "No worktree has '$named' checked out."
@@ -928,77 +1126,22 @@ cmd_rm() {
                 "Commit, stash or delete them, or pass -f to remove it anyway."
     fi
 
-    local base=refs/heads/$default head merged=0 pr="" state="" oid="" ahead
-    git remote get-url origin >/dev/null 2>&1 && base=refs/remotes/origin/$default
-    head=$(git -C "$wt" rev-parse HEAD)
-    if git merge-base --is-ancestor "$head" "$base" 2>/dev/null; then
-        merged=1
-    elif [[ -n $branch ]] && command -v gh >/dev/null 2>&1; then
-        # Asked before the folder goes, as gh may be running from it.
-        pr=$(gh pr view "$branch" --json state,headRefOid --jq '[.state,.headRefOid]|@tsv' 2>/dev/null || true)
-        IFS=$'\t' read -r state oid <<<"$pr" || true
-        ! in_merged_pr "$head" "$state" "$oid" || merged=1
-    fi
-    if (( ! force && ! merged )); then
-        ahead=$(unpushed "$wt" "$default")
-        [[ -z $ahead ]] ||
-            die "'$label' has commits that were never pushed." "Push them, or pass -f to remove it anyway."
-    fi
-
-    local home ws session=""
-    home=$(main_worktree "$common_dir" "$default")
-    herdr_paths
-    ws=${HERDR_PATHS[$wt]-}
-    tmux_sessions
-    if tmux_find "$wt"; then
-        session=$REPLY
-    fi
-    # Later git and tmux calls need a current folder that outlives the worktree.
-    cd "$common_dir"
-
-    local -a remove=(worktree remove)
-    (( ! force )) || remove+=(--force)
-    git "${remove[@]}" "$wt"
-    drop_empty_dirs "$wt" "$branch"
-
-    local notes="" err
-    if [[ -n $branch ]] && (( merged )); then
-        git branch -D "$branch" >/dev/null
-        notes="  ${OUT_BLUE}branch deleted${OUT_RESET}"
-    elif [[ $state == MERGED ]]; then
-        notes="  ${OUT_BLUE}branch kept: has commits not in the merged PR${OUT_RESET}"
-    elif [[ -n $branch ]]; then
-        notes="  ${OUT_BLUE}branch kept: not merged into ${base#refs/*/}${OUT_RESET}"
-    fi
-
-    if [[ -n $ws ]]; then
-        if err=$(herdr workspace close "$ws" 2>&1 >/dev/null); then
-            notes+="  ${OUT_BLUE}Herdr workspace closed${OUT_RESET}"
-        else
-            warn "Herdr didn't close the workspace${err:+: ${err%%$'\n'*}}"
-            print -ru2 -- "  To close it by hand: herdr workspace close ${(q-)ws}"
+    local kept="" ahead
+    # Asked before the folder goes, as gh may be running from it.
+    if ! is_merged "$wt" "$branch" "$base"; then
+        if (( ! force )); then
+            ahead=$(unpushed "$wt" "$default")
+            [[ -z $ahead ]] ||
+                die "'$label' has commits that were never pushed." "Push them, or pass -f to remove it anyway."
         fi
+        kept="not merged into ${base#refs/*/}"
+        [[ $PR_STATE != MERGED ]] || kept="has commits not in the merged PR"
     fi
 
-    local moved=0 target
-    if [[ -n $session && -n ${TMUX-} ]] &&
-        [[ "$(tmux display-message -p '#{session_name}' 2>/dev/null || true)" == "$session" ]]; then
-        if tmux_leave "$session" "$home"; then
-            moved=1
-        else
-            target="=$session"
-            print -ru2 -- "  Left $session open; to close it: tmux kill-session -t ${(q-)target}"
-            session=""
-        fi
-    fi
-    [[ -z $session ]] || notes+="  ${OUT_BLUE}tmux session ${session} closed${OUT_RESET}"
-
-    print -r -- "${OUT_GREEN}✓${OUT_RESET} removed ${label}  $(tildify "$wt")${notes}"
-    [[ -n $named ]] || (( moved )) || step "your folder is gone; run: cd ${(q-)home}"
+    rm_worktree "$wt" "$branch" "$force" "$common_dir" "$home" "$kept"
+    [[ -n $named ]] || (( RM_MOVED )) || step "your folder is gone; run: cd ${(q-)home}"
     # Last, after all output: wkt is likely running in this session.
-    if [[ -n $session ]] && ! err=$(tmux kill-session -t "=$session" 2>&1 >/dev/null); then
-        warn "tmux didn't close session $session${err:+: ${err%%$'\n'*}}"
-    fi
+    tmux_kill "$RM_SESSION"
 }
 
 # ui_theme: pick light or dark (WKT_THEME, then theme-monitor's trigger file,

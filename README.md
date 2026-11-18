@@ -63,6 +63,7 @@ wkt [--herdr]
 wkt new -b <branch> [-s <source>] [-n <name>] [--tmux | --herdr]
 wkt rename -b <new-branch> [-n <name>] [-y]
 wkt rm [-b <branch>] [-f]
+wkt rm --merged [-y]
 wkt setup <repo-url>
 wkt adopt
 wkt --help | --version
@@ -173,8 +174,29 @@ When you remove the worktree you're in, your shell is left in a folder that no l
 |---|---|
 | `-b <branch>` | Remove the worktree that has `<branch>` checked out, instead of the one you're in |
 | `-f` | Remove it even with uncommitted changes, untracked files or commits that were never pushed |
+| `--merged` | Remove every merged worktree in the repository, as below |
+| `-y` | With `--merged`, don't ask first |
 
 It won't remove the main checkout of a normal clone or the worktree that has the default branch checked out, in any layout, and with `-b`, the branch must have a worktree.
+
+`wkt rm --merged` cleans up a whole repository at once. It finds every worktree whose branch has nothing that would be lost, by the test in step 3: the default branch already has it, or its pull request was merged with all of its commits. A detached worktree, the main checkout and the default branch's worktree are never among them. Any with uncommitted changes or untracked files are skipped.
+
+It lists what it will remove and what it's skipping and why, then asks `Remove 2 merged worktrees? [y/N]`. Anything but `y` stops it with nothing changed, and so does having no terminal to ask on, unless you pass `-y`, which skips the question. With nothing to remove, it says so and doesn't ask.
+
+```console
+$ wkt rm --merged
+Merged worktrees to remove:
+  fix-login  ~/.herdr/worktrees/acme/widget/fix-login
+  new-icons  ~/.herdr/worktrees/acme/widget/new-icons
+Skipping:
+  try-cache  ~/.herdr/worktrees/acme/widget/try-cache  (uncommitted changes or untracked files)
+Remove 2 merged worktrees? [y/N] y
+✓ removed fix-login  ~/.herdr/worktrees/acme/widget/fix-login  branch deleted  Herdr workspace closed
+✓ removed new-icons  ~/.herdr/worktrees/acme/widget/new-icons  branch deleted  tmux session widget/new-icons closed
+✓ removed 2, skipped 1
+```
+
+Each one goes exactly as `wkt rm` would remove it. If you're in one of their tmux sessions, that worktree goes last, so wkt switches you away and closes the session once, after everything else. If git can't remove one, wkt reports it, carries on with the rest, and exits 1.
 
 ### `wkt setup`
 
