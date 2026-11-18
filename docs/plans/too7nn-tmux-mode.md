@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | in progress · next: C3 |
+| **Status** | landed. Only the user's Ghostty checks are left |
 | **Updated** | 2026-11-17 |
 | **Tracker** | — |
 | **Related** | [approved design](../superpowers/specs/2026-11-17-tmux-mode-design.md); tmux core design in `wmxscott/dotfiles`, `docs/superpowers/specs/2026-11-16-tmux-core-design.md` |
@@ -15,16 +15,16 @@ wkt opens worktrees as tmux sessions when asked with `--tmux`, keeps them in ste
 
 ### Done when
 
-- [ ] `bats test` and CI pass on `main` with every phase of Stack A merged.
-- [ ] wkt 2.0.0 is tagged and released, and `brew upgrade wkt` installs it from the tap.
+- [x] `bats test` and CI pass on `main` with every phase of Stack A merged.
+- [x] wkt 2.0.0 is tagged and released, and `brew upgrade wkt` installs it from the tap.
 - [ ] In the user's real tmux, in Ghostty:
   - `wkt new -b x --tmux` lands them in a session named `<repo>/x`.
   - `wkt rename -b y` renames that session to `<repo>/y`.
   - `wkt rm`, run from inside it, removes the worktree and leaves them in another session.
-- [ ] `prefix W` opens the picker in a popup, and `Enter`, `Ctrl-N`, `Ctrl-D` and `Ctrl-X` all work from there.
+- [x] `prefix W` opens the picker in a popup, and `Enter`, `Ctrl-N`, `Ctrl-D` and `Ctrl-X` all work from there.
 - [ ] Launchpad's wkt entry in Herdr still opens worktrees as workspaces.
-- [ ] wkt 2.1.0 rejects `--no-herdr` as an unknown option, and nothing the user runs still passes it (S18).
-- [ ] An agent following the updated ai-toolkit skills runs plain `wkt new`, and the user's tmux client doesn't move.
+- [x] wkt 2.1.0 rejects `--no-herdr` as an unknown option, and nothing the user runs still passes it (S18).
+- [x] An agent following the updated ai-toolkit skills runs plain `wkt new`, and the user's tmux client doesn't move.
 
 ## Settled: do not re-derive
 
@@ -259,13 +259,13 @@ Follow S10. Run the kill as the last command, via `tmux kill-session -t <name>`,
 | A6 | Picker: `--tmux` and `--herdr`, the session icon, `Ctrl-D` and `Ctrl-X`, and working inside a tmux popup | A5 |
 | A7 | Release 2.0.0: version, formula, README final pass | A6 |
 
-- [ ] A1: explicit `--herdr`
-- [ ] A2: `wkt new --tmux`
-- [ ] A3: rename keeps the session in step
-- [ ] A4: `wkt rm`
-- [ ] A5: `wkt rm --merged`
-- [ ] A6: picker modes and remove keys
-- [ ] A7: release 2.0.0
+- [x] A1: explicit `--herdr`
+- [x] A2: `wkt new --tmux`
+- [x] A3: rename keeps the session in step
+- [x] A4: `wkt rm`
+- [x] A5: `wkt rm --merged`
+- [x] A6: picker modes and remove keys
+- [x] A7: release 2.0.0
 
 **A1: explicit `--herdr`**
 - **What changes:**
@@ -346,10 +346,10 @@ Each phase is a PR in a different repository, so nothing here touches this repo,
 | R3 | `wmxscott/dotfiles`: tmux `prefix W` opens `wkt --tmux` in a popup at the pane's folder; the core design's `prefix shift+g` note is corrected to say lazygit, from project 4 | R1 |
 | R4 | `wmxscott/ai-toolkit`: the `wkt` plugin's skill, README, tests and marketplace descriptions, and stacked-planning's `landing-changes` skill, say plain `wkt new` for agents, drop `--no-herdr`, and document `wkt rm` | R1 |
 
-- [ ] R1: tap formula 2.0.0
-- [ ] R2: Launchpad passes `--herdr`
-- [ ] R3: tmux `prefix W`
-- [ ] R4: agent skills
+- [x] R1: tap formula 2.0.0
+- [x] R2: Launchpad passes `--herdr`
+- [x] R3: tmux `prefix W`
+- [x] R4: agent skills
 
 **R3 note:** set the popup's folder with `-d '#{pane_current_path}'`, which *is* format-expanded. Its command is plain `wkt --tmux`, with no `#{}` in it, per S15. The existing `bind W` (rename session) goes, and tmux's default `prefix $` stays. Restow `tmux` after merging.
 
@@ -371,10 +371,10 @@ This stack runs after A and R, so it changes the same files as A without overlap
 | C2 | wkt: `--no-herdr` removed from every command, tests flipped to expect exit 2, release 2.1.0 (with C0) | C0, C1 |
 | C3 | `wmxscott/homebrew-tap`: `Formula/wkt.rb` at `v2.1.0` | C2 |
 
-- [ ] C0: switching corrects the session name
-- [ ] C1: docket stops passing `--no-herdr`
-- [ ] C2: wkt 2.1.0 drops `--no-herdr`
-- [ ] C3: tap formula 2.1.0
+- [x] C0: switching corrects the session name
+- [x] C1: docket stops passing `--no-herdr`
+- [x] C2: wkt 2.1.0 drops `--no-herdr`
+- [x] C3: tap formula 2.1.0
 
 **C0: switching corrects the session name**
 - **What changes:** `tmux_open`, when it finds an existing session, works out the expected name per S22, renames the session if it differs, re-tags it, then switches. The `✓` line says when it renamed. Update the README's tmux section.
@@ -450,3 +450,4 @@ Ask of every PR:
 - 2026-11-18: plan amended. Added S22 and phase C0, the user's request that switching corrects a session's name, which ships with C2 in 2.1.0.
 - 2026-11-18: phase C0 landed as #17. The clash check now excludes only the session being named (S22 over S4). Phase C1 landed as docket#176.
 - 2026-11-18: phase C2 landed as #18 (wkt 2.1.0). Unknown long options now name the whole word. Before merging, the project-scope ai-toolkit plugins in the private dotfiles were updated too, since they still passed `--no-herdr`.
+- 2026-11-18: phase C3 landed as homebrew-tap#14, and `brew upgrade` installed 2.1.0, which rejects `--no-herdr`. Every stack has landed. Left: the user's Ghostty checks of `new --tmux`, `rename` and `rm`, and Launchpad.
