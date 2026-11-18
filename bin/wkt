@@ -44,13 +44,14 @@ usage() {
     cat <<EOF
 Usage: $PROG <command> [options]
 
-Git worktrees in a .bare layout. With --herdr, a new or picked worktree
-opens as a Herdr workspace; with --tmux, new opens it as a tmux session.
-rename and rm keep an open workspace or session in step.
+Git worktrees in a .bare layout. With --tmux or --herdr, a new or picked
+worktree opens as a tmux session or a Herdr workspace. rename and rm keep
+an open workspace or session in step.
 
 Commands:
-  (no command) [--herdr]          Pick or create a worktree (needs fzf) and
-                                  print its path, or open it in Herdr
+  (no command) [--tmux | --herdr] Pick, make or remove worktrees (needs fzf),
+                                  printing the picked one's path, or with
+                                  --tmux or --herdr, opening it there
   setup <repo-url>                Clone <repo-url> into a .bare worktree layout
                                   in the current (empty) directory
   adopt                           Turn the current clone into a .bare worktree
@@ -411,6 +412,11 @@ tmux_name() {
     done
 }
 
+# The picker's tmux client: the one switch-client moves, and whose session is
+# the one you're in. From a display-popup, which has no $TMUX_PANE, tmux would
+# otherwise act on the most recently active client, which may be another.
+typeset -g TMUX_CLIENT=
+
 # tmux_open <worktree-path> <branch> [<name>]: switch to the worktree's tmux
 # session, making and tagging it first if there's none. Outside tmux, it
 # leaves the session to attach to in TMUX_ATTACH instead. What it did goes in
@@ -439,7 +445,7 @@ tmux_open() {
     if [[ -z ${TMUX-} ]]; then
         [[ $did == opened* ]] || did="already open in tmux"
         TMUX_ATTACH=$name
-    elif ! err=$(tmux switch-client -t "=$name" 2>&1 >/dev/null); then
+    elif ! err=$(tmux switch-client ${TMUX_CLIENT:+-c$TMUX_CLIENT} -t "=$name" 2>&1 >/dev/null); then
         warn "tmux didn't switch to $name${err:+: ${err%%$'\n'*}}"
         return 1
     fi
@@ -471,7 +477,7 @@ tmux_leave() {
     done
     if [[ -z $to ]]; then
         tmux_open "$2" "$(git -C "$2" branch --show-current)"
-    elif ! err=$(tmux switch-client -t "=$to" 2>&1 >/dev/null); then
+    elif ! err=$(tmux switch-client ${TMUX_CLIENT:+-c$TMUX_CLIENT} -t "=$to" 2>&1 >/dev/null); then
         warn "tmux didn't switch to $to${err:+: ${err%%$'\n'*}}"
         return 1
     fi
@@ -756,6 +762,7 @@ cmd_new() {
         opened=1
     elif [[ $OPEN_IN == tmux ]] && tmux_open "$target_path" "$new_branch" "$label"; then
         open_note="  ${OUT_BLUE}${REPLY}${OUT_RESET}"
+        opened=1
     fi
 
     local display_path
@@ -767,7 +774,7 @@ cmd_new() {
 
     print -r -- "${OUT_GREEN}✓${OUT_RESET} ${new_branch}${label:+ ($label)}  ${display_path}${open_note}"
     [[ -z $TMUX_ATTACH ]] || step "attach with: tmux attach -t ${(q-)TMUX_ATTACH}"
-    typeset -g WKT_PATH=$target_path WKT_HERDR_OPENED=$opened
+    typeset -g WKT_PATH=$target_path WKT_OPENED=$opened
 }
 
 cmd_rename() {
@@ -916,6 +923,19 @@ cmd_rename() {
     print -r -- "${OUT_YELLOW}→${OUT_RESET} your shell is still in the old directory; run: cd ${(q-)new_path}"
 }
 
+# rm_repo: what removing needs to know about the repository you're in: its
+# shared git directory in RM_COMMON, its default branch in RM_DEFAULT, the ref
+# that has what's merged in RM_BASE, and where to go once a worktree is gone
+# in RM_HOME.
+typeset -g RM_COMMON= RM_DEFAULT= RM_BASE= RM_HOME=
+rm_repo() {
+    RM_COMMON=$(common_git_dir)
+    RM_DEFAULT=$(detect_default_branch)
+    RM_BASE=refs/heads/$RM_DEFAULT
+    git remote get-url origin >/dev/null 2>&1 && RM_BASE=refs/remotes/origin/$RM_DEFAULT
+    RM_HOME=$(main_worktree "$RM_COMMON" "$RM_DEFAULT")
+}
+
 # rm_worktree <worktree-path> <branch> <force> <common-git-dir> <home> [<why-kept>]:
 # remove the worktree and the folders it leaves empty, delete its branch
 # unless given a reason to keep it, close its Herdr workspace, leave its tmux
@@ -959,7 +979,7 @@ rm_worktree() {
     fi
 
     if [[ -n $session && -n ${TMUX-} ]] &&
-        [[ "$(tmux display-message -p '#{session_name}' 2>/dev/null || true)" == "$session" ]]; then
+        [[ "$(tmux display-message ${TMUX_CLIENT:+-t$TMUX_CLIENT} -p '#{session_name}' 2>/dev/null || true)" == "$session" ]]; then
         if tmux_leave "$session" "$home"; then
             RM_MOVED=1
         else
@@ -974,31 +994,39 @@ rm_worktree() {
     RM_SESSION=$session
 }
 
-# rm_merged <yes> <common-git-dir> <default-branch> <base-ref> <home>: list
-# every worktree on a branch that is_merged passes, apart from the main
-# checkout and the default branch's, skipping those with changes. Ask unless
-# <yes>, then remove each with rm_worktree, the one whose tmux session you're
-# in last. Exits 1 if any failed.
-rm_merged() {
-    local yes=$1 common_dir=$2 default=$3 base=$4 home=$5
-    local -a lines=("${(@f)$(git worktree list --porcelain)}") go=() go_b=() skip=() skip_b=()
-    local main=${${lines[1]#worktree }:A} here line wt="" branch i
-    here=$(git rev-parse --show-toplevel 2>/dev/null || true)
-    [[ -z $here ]] || here=${here:A}
+# merged_worktrees: every worktree on a branch that is_merged passes, apart
+# from the main checkout and the default branch's: the paths and branches of
+# those to remove in RM_GO and RM_GO_B, and of those with changes, to skip,
+# in RM_SKIP and RM_SKIP_B. Needs rm_repo first.
+typeset -ga RM_GO RM_GO_B RM_SKIP RM_SKIP_B
+merged_worktrees() {
+    local -a lines=("${(@f)$(git worktree list --porcelain)}")
+    local main=${${lines[1]#worktree }:A} line wt="" branch
+    RM_GO=() RM_GO_B=() RM_SKIP=() RM_SKIP_B=()
     for line in "${lines[@]}"; do
         case $line in
             "worktree "* ) wt=${${line#worktree }:A} ;;
             "branch refs/heads/"* )
                 branch=${line#branch refs/heads/}
-                [[ $wt != "$main" && $branch != "$default" && -d $wt ]] || continue
-                is_merged "$wt" "$branch" "$base" || continue
+                [[ $wt != "$main" && $branch != "$RM_DEFAULT" && -d $wt ]] || continue
+                is_merged "$wt" "$branch" "$RM_BASE" || continue
                 if [[ -z "$(git -C "$wt" status --porcelain)" ]]; then
-                    go+=("$wt") go_b+=("$branch")
+                    RM_GO+=("$wt") RM_GO_B+=("$branch")
                 else
-                    skip+=("$wt") skip_b+=("$branch")
+                    RM_SKIP+=("$wt") RM_SKIP_B+=("$branch")
                 fi ;;
         esac
     done
+}
+
+# rm_merged <yes>: list what merged_worktrees found, ask unless <yes>, then
+# remove each with rm_worktree, the one whose tmux session you're in last.
+# Exits 1 if any failed. Needs merged_worktrees first.
+rm_merged() {
+    local yes=$1 common_dir=$RM_COMMON home=$RM_HOME here i
+    local -a go=("${RM_GO[@]}") go_b=("${RM_GO_B[@]}") skip=("${RM_SKIP[@]}") skip_b=("${RM_SKIP_B[@]}")
+    here=$(git rev-parse --show-toplevel 2>/dev/null || true)
+    [[ -z $here ]] || here=${here:A}
 
     local n=${#go} s=s reply="" current removed=0 failed=0 gone_here=0 last=""
     if (( n )); then
@@ -1025,7 +1053,7 @@ rm_merged() {
     fi
 
     if [[ -n ${TMUX-} ]] && (( n > 1 )); then
-        current=$(tmux display-message -p '#{session_name}' 2>/dev/null || true)
+        current=$(tmux display-message ${TMUX_CLIENT:+-t$TMUX_CLIENT} -p '#{session_name}' 2>/dev/null || true)
         tmux_sessions
         for (( i = 1; i < n; i++ )); do
             tmux_find "${go[i]}" && [[ $REPLY == "$current" ]] || continue
@@ -1091,14 +1119,10 @@ cmd_rm() {
     fi
 
     git rev-parse --git-dir >/dev/null 2>&1 || die "Not inside a Git repository."
-    local common_dir default base home
-    common_dir=$(common_git_dir)
-    default=$(detect_default_branch)
-    base=refs/heads/$default
-    git remote get-url origin >/dev/null 2>&1 && base=refs/remotes/origin/$default
-    home=$(main_worktree "$common_dir" "$default")
+    rm_repo
     if (( all )); then
-        rm_merged "$yes" "$common_dir" "$default" "$base" "$home"
+        merged_worktrees
+        rm_merged "$yes"
         return
     fi
 
@@ -1114,8 +1138,8 @@ cmd_rm() {
     fi
     wt=${wt:A}
     git_dir=$(git -C "$wt" rev-parse --absolute-git-dir)
-    [[ ${git_dir:A} != "$common_dir" ]] || die "Refusing to remove the main checkout."
-    [[ $branch != "$default" ]] ||
+    [[ ${git_dir:A} != "$RM_COMMON" ]] || die "Refusing to remove the main checkout."
+    [[ $branch != "$RM_DEFAULT" ]] ||
         die "Refusing to remove the default branch's worktree."
 
     local label=${branch:-${wt:t}} dirty
@@ -1128,18 +1152,18 @@ cmd_rm() {
 
     local kept="" ahead
     # Asked before the folder goes, as gh may be running from it.
-    if ! is_merged "$wt" "$branch" "$base"; then
+    if ! is_merged "$wt" "$branch" "$RM_BASE"; then
         if (( ! force )); then
-            ahead=$(unpushed "$wt" "$default")
+            ahead=$(unpushed "$wt" "$RM_DEFAULT")
             [[ -z $ahead ]] ||
                 die "'$label' has commits that were never pushed." "Push them, or pass -f to remove it anyway."
         fi
-        kept="not merged into ${base#refs/*/}"
+        kept="not merged into ${RM_BASE#refs/*/}"
         [[ $PR_STATE != MERGED ]] || kept="has commits not in the merged PR"
     fi
 
-    rm_worktree "$wt" "$branch" "$force" "$common_dir" "$home" "$kept"
-    [[ -n $named ]] || (( RM_MOVED )) || step "your folder is gone; run: cd ${(q-)home}"
+    rm_worktree "$wt" "$branch" "$force" "$RM_COMMON" "$RM_HOME" "$kept"
+    [[ -n $named ]] || (( RM_MOVED )) || step "your folder is gone; run: cd ${(q-)RM_HOME}"
     # Last, after all output: wkt is likely running in this session.
     tmux_kill "$RM_SESSION"
 }
@@ -1293,7 +1317,8 @@ ui_parse() {
 
 # ui_rows: fill UI_ROWS with one fzf row per worktree, default branch first,
 # and UI_AT with the current worktree's row, or 0. A row is
-# head<TAB>branch<TAB>tail<TAB>path; fzf shows a tab as one cell.
+# head<TAB>branch<TAB>tail<TAB>path; fzf shows a tab as one cell. Needs
+# herdr_paths and tmux_sessions first.
 typeset -ga UI_ROWS
 typeset -gi UI_AT=0
 ui_rows() {
@@ -1373,7 +1398,7 @@ ui_rows() {
             ui_paint red "$UI_ICO_MISSING"
         elif [[ ${e_flag[i]} == locked ]]; then
             ui_paint yellow "$UI_ICO_LOCKED"
-        elif [[ -n ${HERDR_PATHS[${wt:A}]-} ]]; then
+        elif [[ -n ${HERDR_PATHS[${wt:A}]-} ]] || tmux_find "${wt:A}"; then
             ui_paint blue "$UI_ICO_OPEN"
         else
             REPLY=" "
@@ -1532,16 +1557,94 @@ ui_new() {
             args+=(--herdr)
             [[ -z $UI_QUERY ]] || args+=(-n "$UI_QUERY")
         fi
+    elif [[ $OPEN_IN == tmux ]]; then
+        args+=(--tmux)
     fi
 
     UI_BACK=0
     cmd_new "${args[@]}"
 }
 
+# ui_confirm <title> <question> [<row>...]: a y/N input line, with the rows
+# listed under it. True if the answer is y.
+ui_confirm() {
+    local title=$1 prompt="$2 [y/N] " out st=0
+    shift 2
+    ui_header "$UI_ENTER answer · esc cancels" "$title"
+    out=$({ (( ! $# )) || print -rl -- "$@"; } |
+        ui_fzf "$prompt" "$REPLY" --print-query --disabled) || st=$?
+    (( st != 130 )) || return 1
+    (( st == 0 || st == 1 )) || die "fzf exited with status $st."
+    [[ ${out%%$'\n'*} == [yY]* ]]
+}
+
+# ui_run <folder> <command>...: run a removal from the folder in a subshell,
+# so that a refusal can't end the picker, and leave what it said last, its
+# summary or its error, in UI_NOTICE.
+typeset -g UI_NOTICE=
+ui_run() {
+    local dir=$1 out st=0 line
+    shift
+    out=$({
+        OUT_GREEN= OUT_BLUE= OUT_YELLOW= OUT_RESET= ERR_RED= ERR_YELLOW= ERR_RESET=
+        cd -- "$dir"
+        "$@"
+    } 2>&1 </dev/null) || st=$?
+    local -a lines=("${(@f)out}")
+    local -a ok=(${(M)lines:#✓ *}) bad=(${(M)lines:#error: *})
+    if (( ! st )); then
+        ui_paint green "${ok[-1]-}"
+    else
+        line=${${bad[-1]-}#error: }
+        ui_paint red "$UI_ICO_ALERT ${line:-${lines[1]-}}"
+    fi
+    UI_NOTICE=$REPLY
+}
+
+# ui_rm <worktree-path>: Ctrl-D: ask, then remove the worktree as
+# wkt rm -b <branch> does, or a detached one as wkt rm does from inside it.
+ui_rm() {
+    local wt=$1 branch
+    branch=$(git -C "$wt" branch --show-current 2>/dev/null || true)
+    ui_confirm "Remove worktree" "Remove ${branch:-${wt:t}}?" || return 0
+    if [[ -n $branch ]]; then
+        ui_run . cmd_rm -b "$branch"
+    else
+        ui_run "$wt" cmd_rm
+    fi
+}
+
+# ui_merged: Ctrl-X: show what wkt rm --merged would remove and skip, ask,
+# then remove them as wkt rm --merged -y does.
+ui_merged() {
+    local n i s=s note
+    local -a rows=()
+    rm_repo
+    merged_worktrees
+    n=${#RM_GO}
+    for (( i = 1; i <= n; i++ )); do
+        ui_paint text "${RM_GO_B[i]}  $(tildify "${RM_GO[i]}")"
+        rows+=("$REPLY")
+    done
+    for (( i = 1; i <= ${#RM_SKIP}; i++ )); do
+        ui_paint overlay0 dim "${RM_SKIP_B[i]}  $(tildify "${RM_SKIP[i]}")  (skipped: uncommitted changes or untracked files)"
+        rows+=("$REPLY")
+    done
+    if (( ! n )); then
+        note="No merged worktrees to remove"
+        (( ! ${#RM_SKIP} )) || note+="; ${#RM_SKIP} skipped with uncommitted changes or untracked files"
+        ui_paint yellow "$note"
+        UI_NOTICE=$REPLY
+        return 0
+    fi
+    (( n > 1 )) || s=
+    ui_confirm "Remove merged worktrees" "Remove $n merged worktree$s?" "${rows[@]}" || return 0
+    ui_run . rm_merged 1
+}
+
 cmd_ui() {
     wants_help "$@" && { usage; exit 0; }
     take_open_flags "" "$@"
-    [[ $OPEN_IN != tmux ]] || usage_error "" "--tmux isn't supported yet."
     if (( ${#ARGS} )); then
         [[ ${ARGS[1]} == -* ]] && usage_error "" "Unknown option: ${ARGS[1]}"
         usage_error "" "Unexpected argument: ${ARGS[1]}"
@@ -1558,15 +1661,26 @@ cmd_ui() {
 
     ui_theme
     export WKT_THEME=$UI_THEME
-    herdr_paths
-    local header out st
-    ui_header "$UI_ENTER open · ^n new · esc quit"
-    header=$REPLY
+    local common_dir session="" header out st wt branch
+    common_dir=$(common_git_dir)
+    if [[ -n ${TMUX-} ]]; then
+        IFS=$'\t' read -r TMUX_CLIENT session \
+            <<<"$(tmux display-message -p $'#{client_name}\t#{session_name}' 2>/dev/null || true)"
+    fi
 
     while true; do
+        herdr_paths
+        tmux_sessions
+        # A removal that closed your session has moved your client to another.
+        if [[ -n $session ]] && (( ${#TMUX_NAMES} && ! ${TMUX_NAMES[(Ie)$session]} )); then
+            exit 0
+        fi
+        [[ -d $PWD ]] || cd "$common_dir"
         ui_rows
-        local -a args=(--delimiter $'\t' --with-nth 1..3 --nth 2 --tabstop 1 --expect ctrl-n --print-query
-            --preview "${(q)SELF} __preview {4}" --preview-window 'right,40%,border-left')
+        ui_header "$UI_ENTER open · ^n new · ^d remove · ^x remove merged · esc quit" "" "$UI_NOTICE"
+        header=$REPLY UI_NOTICE=
+        local -a args=(--delimiter $'\t' --with-nth 1..3 --nth 2 --tabstop 1 --expect ctrl-n,ctrl-d,ctrl-x
+            --print-query --preview "${(q)SELF} __preview {4}" --preview-window 'right,40%,border-left')
         (( UI_AT <= 1 )) || args+=(--bind "load:pos($UI_AT)")
 
         st=0
@@ -1575,15 +1689,28 @@ cmd_ui() {
         (( st != 130 )) || exit 130
         (( st == 0 || st == 1 )) || die "fzf exited with status $st."
         ui_parse "$out"
+        wt=${UI_SEL##*$'\t'}
 
+        case $UI_KEY in
+            ctrl-d ) [[ -z $UI_SEL ]] || ui_rm "$wt"; continue ;;
+            ctrl-x ) ui_merged; continue ;;
+        esac
         if [[ $UI_KEY == ctrl-n || -z $UI_SEL ]]; then
             ui_new "$UI_QUERY"
             (( ! UI_BACK )) || continue
-            (( WKT_HERDR_OPENED )) || print -r -- "$WKT_PATH" >&3
+            (( WKT_OPENED )) || print -r -- "$WKT_PATH" >&3
             return 0
         fi
-        local wt=${UI_SEL##*$'\t'}
-        [[ $OPEN_IN == herdr ]] && herdr_open "$(common_git_dir)" "$wt" "" --focus || print -r -- "$wt" >&3
+        if [[ $OPEN_IN == herdr ]] && herdr_open "$common_dir" "$wt" "" --focus; then
+            return 0
+        elif [[ $OPEN_IN == tmux ]]; then
+            branch=$(git -C "$wt" branch --show-current 2>/dev/null || true)
+            if tmux_open "$wt" "${branch:-${wt:t}}"; then
+                [[ -z $TMUX_ATTACH ]] || step "attach with: tmux attach -t ${(q-)TMUX_ATTACH}"
+                return 0
+            fi
+        fi
+        print -r -- "$wt" >&3
         return 0
     done
 }

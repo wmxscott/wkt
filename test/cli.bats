@@ -33,7 +33,7 @@ setup() { common_setup; }
 @test "--help mentions the picker and its theme" {
     run wkt --help
     [ "$status" -eq 0 ]
-    contains "$output" "Pick or create a worktree (needs fzf)"
+    contains "$output" "Pick, make or remove worktrees (needs fzf)"
     contains "$output" "WKT_THEME"
 }
 
@@ -82,10 +82,10 @@ setup() { common_setup; }
     contains "$output" "Unexpected argument: extra"
 }
 
-@test "the picker doesn't take --tmux yet" {
-    run wkt --tmux
+@test "the picker: --tmux and --herdr together" {
+    run wkt --tmux --herdr
     [ "$status" -eq 2 ]
-    contains "$output" "--tmux isn't supported yet"
+    contains "$output" "--tmux and --herdr can't be used together."
     contains "$output" "Run 'wkt --help' for usage."
 }
 
@@ -104,6 +104,7 @@ setup() { common_setup; }
         lacks "$output" "--no-herdr"
     done
     contains "$(wkt --help)" "--herdr"
+    contains "$(wkt --help)" "(no command) [--tmux | --herdr]"
     contains "$(wkt new --help)" "--herdr"
     contains "$(wkt new --help)" "--tmux"
     lacks "$(wkt rename --help)" "--herdr"

@@ -61,8 +61,10 @@ fi
 EOF
 
     # STUB_TMUX_FAIL=1 fails every tmux call; a command, like switch-client,
-    # fails only that one.
-    export STUB_TMUX_LOG="$TMP/tmux.log"
+    # fails only that one. display-message -p fills in #{client_name} from
+    # STUB_TMUX_CLIENT and #{session_name} from STUB_TMUX_CURRENT. A killed
+    # session drops out of list-sessions.
+    export STUB_TMUX_LOG="$TMP/tmux.log" STUB_TMUX_KILLED="$TMP/tmux.killed"
     cat >"$STUB_BIN/tmux" <<'EOF'
 #!/bin/bash
 printf '%s\n' "$*" >>"$STUB_TMUX_LOG"
@@ -71,8 +73,17 @@ if [[ -n ${STUB_TMUX_FAIL:-} && ( $STUB_TMUX_FAIL == 1 || $STUB_TMUX_FAIL == "$1
     exit 1
 fi
 case $1 in
-    list-sessions ) [[ -z ${STUB_TMUX_SESSIONS:-} ]] || printf '%s\n' "$STUB_TMUX_SESSIONS" ;;
-    display-message ) [[ " $* " != *" -p "* ]] || printf '%s\n' "${STUB_TMUX_CURRENT:-}" ;;
+    list-sessions )
+        [[ -n ${STUB_TMUX_SESSIONS:-} ]] || exit 0
+        while IFS= read -r row; do
+            grep -qxF -e "${row%%$'\t'*}" "$STUB_TMUX_KILLED" 2>/dev/null || printf '%s\n' "$row"
+        done <<<"$STUB_TMUX_SESSIONS" ;;
+    display-message )
+        [[ " $* " == *" -p "* ]] || exit 0
+        format=${!#}
+        format=${format//'#{client_name}'/${STUB_TMUX_CLIENT:-}}
+        printf '%s\n' "${format//'#{session_name}'/${STUB_TMUX_CURRENT:-}}" ;;
+    kill-session ) printf '%s\n' "${3#=}" >>"$STUB_TMUX_KILLED" ;;
 esac
 EOF
 
