@@ -163,6 +163,7 @@ row_path() { fzf_input 1 | sed -n "${1}p" | cut -f 4; }
     contains "$args" $'--expect\nctrl-n,ctrl-d,ctrl-x'
     contains "$args" "--print-query"
     contains "$args" $'--ansi\n--layout=reverse\n--height=100%\n--border=none\n--margin=0\n--padding=0\n--no-info'
+    contains "$args" $'--with-shell\nsh -c'
     contains "$args" $'--prompt\n> '
 }
 
@@ -180,7 +181,7 @@ row_path() { fzf_input 1 | sed -n "${1}p" | cut -f 4; }
 ICO_HOME=$'\xef\x91\xad'
 ICO_BRANCH=$'\xef\x90\x98'
 ICO_COMMIT=$'\xef\x90\x97'
-ICO_CURRENT=$'\xef\x84\x91'
+ICO_CURRENT=$'\xef\x86\x92'
 ICO_MISSING=$'\xf3\xb0\x8c\xb8'
 ICO_LOCKED=$'\xef\x91\x96'
 ELLIPSIS=$'\xe2\x80\xa6'
@@ -285,15 +286,40 @@ trigger() {
     contains "$(row_for "$LAYOUT/loose")" "$(git -C "$LAYOUT/loose" rev-parse --short=7 HEAD)"
 }
 
-@test "header: hints row" {
-    make_layout
-    run picker_input
-    contains "$(fzf_args 1)" $'j/k move \xc2\xb7 / search \xc2\xb7 \xe2\x86\xb5 open \xc2\xb7 ^n new \xc2\xb7 ^d remove \xc2\xb7 ^x remove merged \xc2\xb7 esc quit'
+@test "rows have no faint text, which fzf's highlighted line would hide" {
+    make_clone
+    fzf_reply 1 130
+    cd "$CLONE"
+    run wkt
+    lacks "$(fzf_input 1)" $'\e[2;'
+    contains "$(row_for "$CLONE" | cut -f 3)" $'\e[38;2;165;173;203m'
 }
 
-LIST_KEYS='j:down,k:up,/:show-input+unbind(j,k,/)'
+@test "header: two rows of hints, to fit beside the preview" {
+    make_layout
+    run picker_input
+    local header
+    header=$(fzf_args 1 | sed $'s/\e\\[[0-9;]*m//g')
+    contains "$header" $'\nj/k move \xc2\xb7 / search \xc2\xb7 \xe2\x86\xb5 open \xc2\xb7 q/esc close\n^n new \xc2\xb7 ^d remove \xc2\xb7 ^x remove merged\n'
+}
 
-@test "the list: j and k move, and / shows the hidden input line to search" {
+LIST_KEYS='j:down,k:up,q:abort'
+UP_DOWN=$'\xe2\x86\x91/\xe2\x86\x93'
+
+# fzf_bind <n> <key>: what call n binds the key to. A header in it can
+# span lines, so the arguments are read whole.
+fzf_bind() {
+    local arg
+    while IFS= read -r -d '' arg; do
+        if [[ $arg == "$2:"* ]]; then
+            printf '%s' "${arg#"$2:"}"
+            return 0
+        fi
+    done <"$STUB_FZF_DIR/$1.args"
+    return 1
+}
+
+@test "the list: j and k move and q closes, and / shows the hidden input line to search" {
     make_layout
     run picker_input
     local args
@@ -301,6 +327,25 @@ LIST_KEYS='j:down,k:up,/:show-input+unbind(j,k,/)'
     contains "$args" "--no-input"
     contains "$args" $'--bind\n'"$LIST_KEYS"
     lacks "$args" "--disabled"
+    local search
+    search=$(fzf_bind 1 /)
+    starts_with "$search" "show-input+unbind(j,k,/,q)+change-header:"
+    contains "$search" "$UP_DOWN move"
+    contains "$search" $'\xc2\xb7 esc back'
+    lacks "$search" "j/k move"
+}
+
+@test "the list: Esc leaves a search for j and k again, and otherwise closes" {
+    make_layout
+    run picker_input
+    local esc back
+    esc=$(fzf_bind 1 esc)
+    starts_with "$esc" "transform:"
+    back=$(FZF_INPUT_STATE=enabled sh -c "${esc#transform:}")
+    starts_with "$back" "clear-query+search()+hide-input+rebind(j,k,/,q)+change-header:"
+    contains "$back" "j/k move"
+    contains "$back" "q/esc close"
+    [ "$(FZF_INPUT_STATE=hidden sh -c "${esc#transform:}")" = abort ]
 }
 
 @test "long paths are cut from the left" {
@@ -514,7 +559,7 @@ MACCHIATO_YELLOW="38;2;238;212;159"
     args=$(fzf_args 1)
     contains "$args" $'--preview\n'
     contains "$args" "bin/wkt __preview {4}"
-    contains "$args" $'--preview-window\nright,40%,border-left'
+    contains "$args" $'--preview-window\nright,60%,border-left'
 }
 
 @test "ctrl-n: branch, source, then created and printed" {
@@ -615,7 +660,12 @@ MACCHIATO_YELLOW="38;2;238;212;159"
     contains "$args" $'--prompt\nSource: '
     contains "$args" "--no-input"
     contains "$args" $'--bind\n'"$LIST_KEYS"
-    contains "$args" $'j/k move \xc2\xb7 / search \xc2\xb7 \xe2\x86\xb5 use as source \xc2\xb7 esc discards'
+    contains "$args" $'j/k move \xc2\xb7 / search \xc2\xb7 \xe2\x86\xb5 use as source \xc2\xb7 q/esc discards'
+    contains "$(fzf_bind 3 /)" "$UP_DOWN move"
+    contains "$(fzf_bind 3 /)" "New worktree"
+    local esc
+    esc=$(fzf_bind 3 esc)
+    [ "$(FZF_INPUT_STATE=hidden sh -c "${esc#transform:}")" = abort ]
 }
 
 @test "the input steps and confirmations type normally, with no j/k keys" {
@@ -966,6 +1016,8 @@ no_branch() { ! git -C "$LAYOUT" show-ref --verify --quiet "refs/heads/$1"; }
     [ "$(fzf_input 3 | cut -f 4)" = "$LAYOUT/main" ]
     contains "$(fzf_args 3)" "--expect"
     contains "$(fzf_args 3)" "✓ removed topic  $LAYOUT/topic  branch deleted"
+    lacks "$(fzf_bind 3 /)" "removed"
+    lacks "$(fzf_bind 3 esc)" "removed"
 }
 
 @test "ctrl-d: anything but y, or esc, keeps it" {

@@ -87,18 +87,18 @@ Run `wkt` on its own, anywhere in a repository, to pick one of its worktrees, ma
 
 Each row shows a worktree's branch and folder. An icon at the end marks the worktree you're in, one that has a [tmux session](#finding-a-worktrees-session) or is open in Herdr, one whose folder is gone, or one that's locked. The pane on the right shows the highlighted worktree's upstream, changed files and recent commits.
 
-The picker opens with search off: `j` and `k` move, as the arrow keys do, and other letters do nothing. `/` turns search on and shows the `>` prompt. From then on, everything you type, `j` and `k` included, searches branch names.
+The picker opens with search off: `j` and `k` move, as the arrow keys do, `q` closes it, and other letters do nothing. `/` turns search on and shows the `>` prompt. From then on, everything you type, `j`, `k` and `q` included, searches branch names, until `Esc` clears the search and turns it off again. The header shows the keys for the moment.
 
 | Key | |
 |---|---|
 | `j` / `k` | Move down or up, until you press `/` |
-| `/` | Search branch names |
+| `/` | Search branch names. `Esc` stops searching |
 | `Enter` | Choose the highlighted worktree |
 | `Ctrl-N` | Make a new worktree, with what you searched for, if anything, as its branch name |
 | `Enter` with no matches | The same as `Ctrl-N` |
 | `Ctrl-D` | Remove the highlighted worktree, as `wkt rm -b <branch>` does, after asking |
 | `Ctrl-X` | Remove every merged worktree, as `wkt rm --merged` does, after showing which and asking |
-| `Esc` | Quit |
+| `q` / `Esc` | Close the picker |
 
 A new worktree takes up to three steps:
 
@@ -106,7 +106,7 @@ A new worktree takes up to three steps:
 2. **Source.** The branch to start from, picked as in the list: `j` and `k` move, and `/` searches. Skipped when the branch already exists locally or on origin.
 3. **Label.** With `--herdr` only: the workspace's label. Leave it blank to let Herdr pick one, or press `Ctrl-O` to not open the worktree in Herdr. `--tmux` adds no step.
 
-`Esc` at any step goes back to the list. After the last step, it runs [`wkt new`](#wkt-new) with your answers.
+`Esc` at any step goes back to the list. In the source step, `q` does too, and while you search, `Esc` first stops the search. After the last step, it runs [`wkt new`](#wkt-new) with your answers.
 
 The picker prints the chosen worktree's path and nothing else. `wkt --tmux` opens its [tmux session](#tmux) instead, as `wkt new --tmux` does: inside tmux, it switches you to it, and outside, it says how to attach. `wkt --herdr` opens it as a Herdr workspace. Either way it prints no path, unless the worktree couldn't be opened; then it warns and prints the path. A new worktree opens the same way.
 
@@ -343,7 +343,7 @@ export WKT_ROOT=~/src/worktrees
 | `0` | Done. This includes when opening, switching to or closing a tmux session or Herdr workspace didn't work, which only warns |
 | `1` | wkt refused or something went wrong, such as not being in a repository, a folder in the way, or work that would be lost. Also when `wkt rename` or `wkt rm --merged` asks first and you answer anything but `y`, or there's no terminal to ask on and no `-y`, and when `wkt rm --merged` couldn't remove one of the worktrees |
 | `2` | Bad arguments, including flags that clash: `--tmux` with `--herdr`, either of them with `rename` or `rm`, and `rm --merged` with `-b` or `-f`. Also plain `wkt` without a terminal |
-| `130` | The picker was closed with `Esc` |
+| `130` | The picker was closed with `q` or `Esc` |
 
 A git command that fails passes on its own status instead of `1`.
 
