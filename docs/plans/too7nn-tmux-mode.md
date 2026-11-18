@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | in progress · next: A1 |
+| **Status** | in progress · next: A2 |
 | **Updated** | 2026-11-17 |
 | **Tracker** | — |
 | **Related** | [approved design](../superpowers/specs/2026-11-17-tmux-mode-design.md); tmux core design in `wmxscott/dotfiles`, `docs/superpowers/specs/2026-11-16-tmux-core-design.md` |
@@ -398,3 +398,4 @@ Ask of every PR:
 
 - 2026-11-17: plan written from the approved design.
 - 2026-11-17: plan amended. Added S18 and Stack C, to remove `--no-herdr` in 2.1.0 once the skills and docket stop passing it, as the user asked.
+- 2026-11-17: phase A1 landed as #10.
