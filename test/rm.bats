@@ -4,6 +4,7 @@ load test_helper
 
 LIST=$'list-sessions -F #{session_name}\t#{@wkt-worktree}\t#{session_path}\t#{session_last_attached}'
 CURRENT='display-message -p #{session_name}'
+GH_VIEW='pr view topic --json state,headRefOid --jq [.state,.headRefOid]|@tsv'
 
 setup() {
     common_setup
@@ -18,6 +19,17 @@ setup() {
 has_branch() { git -C "$LAYOUT" show-ref --verify --quiet "refs/heads/$1"; }
 no_branch() { ! git -C "$LAYOUT" show-ref --verify --quiet "refs/heads/$1"; }
 commit() { git commit --quiet --allow-empty -m "${1:-work}"; }
+
+# pr <state> <head-oid>: gh's answer for the branch's pull request.
+pr() { printf '%s\t%s' "$1" "$2"; }
+
+# gone_upstream: push topic with an upstream, then delete it on origin and
+# prune it, as GitHub does after merging a pull request.
+gone_upstream() {
+    git push --quiet -u origin topic
+    git push --quiet origin --delete topic
+    git fetch --quiet --prune origin
+}
 
 @test "removes the worktree you're in, and its branch when it was never used" {
     run --separate-stderr wkt rm
@@ -79,6 +91,22 @@ commit() { git commit --quiet --allow-empty -m "${1:-work}"; }
     has_branch main
 }
 
+@test "refuses the default branch's worktree in a normal clone too" {
+    make_clone
+    git -C "$CLONE" checkout --quiet develop
+    cd "$CLONE"
+    wkt new -b main >/dev/null 2>&1
+    run wkt rm -b main
+    [ "$status" -eq 1 ]
+    contains "$output" "Refusing to remove the default branch's worktree."
+    cd "$HOME/.herdr/worktrees/acme/widget/main"
+    run wkt rm
+    [ "$status" -eq 1 ]
+    contains "$output" "Refusing to remove the default branch's worktree."
+    [ -d "$HOME/.herdr/worktrees/acme/widget/main" ]
+    git -C "$CLONE" show-ref --verify --quiet refs/heads/main
+}
+
 @test "refuses a branch with no worktree" {
     run wkt rm -b develop
     [ "$status" -eq 1 ]
@@ -138,6 +166,62 @@ commit() { git commit --quiet --allow-empty -m "${1:-work}"; }
     [ -d "$LAYOUT/topic" ]
 }
 
+@test "a branch the default branch already has passes, even ahead of its upstream" {
+    commit
+    git push --quiet -u origin topic
+    commit "more"
+    git push --quiet origin HEAD:main
+    git fetch --quiet origin
+    run wkt rm
+    [ "$status" -eq 0 ]
+    no_branch topic
+}
+
+@test "squash-merged with its upstream gone: removed and deleted without -f" {
+    commit
+    gone_upstream
+    STUB_GH_PR=$(pr MERGED "$(rev . HEAD)") run wkt rm
+    [ "$status" -eq 0 ]
+    [ ! -e "$LAYOUT/topic" ]
+    no_branch topic
+    contains "${lines[0]}" "branch deleted"
+    [ "$(cat "$STUB_GH_LOG")" = "$GH_VIEW" ]
+}
+
+@test "squash-merged, then a commit made after the PR's head: refused" {
+    local head
+    commit
+    gone_upstream
+    head=$(rev . HEAD)
+    commit "after"
+    STUB_GH_PR=$(pr MERGED "$head") run wkt rm
+    [ "$status" -eq 1 ]
+    contains "$output" "'topic' has commits that were never pushed."
+    [ -d "$LAYOUT/topic" ]
+    has_branch topic
+    [ "$(cat "$STUB_GH_LOG")" = "$GH_VIEW" ]
+}
+
+@test "merged, with a PR head that isn't here and isn't HEAD: refused" {
+    commit
+    gone_upstream
+    STUB_GH_PR=$(pr MERGED 0123456789abcdef0123456789abcdef01234567) run wkt rm
+    [ "$status" -eq 1 ]
+    contains "$output" "'topic' has commits that were never pushed."
+    [ -d "$LAYOUT/topic" ]
+}
+
+@test "merged, with a PR head that has HEAD in it: removed" {
+    local later
+    commit
+    gone_upstream
+    later=$(git commit-tree -p HEAD -m later 'HEAD^{tree}')
+    STUB_GH_PR=$(pr MERGED "$later") run wkt rm
+    [ "$status" -eq 0 ]
+    [ ! -e "$LAYOUT/topic" ]
+    no_branch topic
+}
+
 # --- the branch ------------------------------------------------------------
 
 @test "pushed but not merged: removes the worktree and keeps the branch" {
@@ -148,13 +232,13 @@ commit() { git commit --quiet --allow-empty -m "${1:-work}"; }
     [ ! -e "$LAYOUT/topic" ]
     has_branch topic
     contains "${lines[0]}" "✓ removed topic  $LAYOUT/topic  branch kept: not merged into origin/main"
-    [ "$(cat "$STUB_GH_LOG")" = "pr view topic --json state --jq .state" ]
+    [ "$(cat "$STUB_GH_LOG")" = "$GH_VIEW" ]
 }
 
 @test "an open pull request keeps the branch" {
     commit
     git push --quiet -u origin topic
-    STUB_GH_PR=OPEN run wkt rm
+    STUB_GH_PR=$(pr OPEN "$(rev . HEAD)") run wkt rm
     [ "$status" -eq 0 ]
     has_branch topic
     contains "$output" "branch kept"
@@ -163,7 +247,7 @@ commit() { git commit --quiet --allow-empty -m "${1:-work}"; }
 @test "a merged pull request deletes the local branch, and never origin's" {
     commit
     git push --quiet -u origin topic
-    STUB_GH_PR=MERGED run wkt rm
+    STUB_GH_PR=$(pr MERGED "$(rev . HEAD)") run wkt rm
     [ "$status" -eq 0 ]
     no_branch topic
     contains "${lines[0]}" "branch deleted"
@@ -203,6 +287,7 @@ commit() { git commit --quiet --allow-empty -m "${1:-work}"; }
     contains "$output" "'topic' has commits that were never pushed."
 
     git -C "$solo" merge --quiet --ff-only topic
+    rm -f "$STUB_GH_LOG"
     run wkt rm
     [ "$status" -eq 0 ]
     [ ! -e "$wt" ]
@@ -217,6 +302,27 @@ commit() { git commit --quiet --allow-empty -m "${1:-work}"; }
     [ "$status" -eq 0 ]
     [ "$(herdr_calls)" = $'workspace list\nworkspace close w2' ]
     [ "${lines[0]}" = "✓ removed topic  $LAYOUT/topic  branch deleted  Herdr workspace closed" ]
+}
+
+@test "the workspace closes after the folder and branch go, before the session" {
+    export STUB_TMUX_LOG="$STUB_HERDR_LOG" PROBE_DIR="$LAYOUT/topic" PROBE_GIT="$LAYOUT/.bare"
+    cat >"$STUB_BIN/herdr" <<'EOF'
+#!/bin/bash
+note=""
+if [[ $2 == close ]]; then
+    [[ ! -e $PROBE_DIR ]] || note+=" (folder still there)"
+    ! git --git-dir="$PROBE_GIT" show-ref --verify --quiet refs/heads/topic || note+=" (branch still there)"
+fi
+printf '%s%s\n' "$*" "$note" >>"$STUB_HERDR_LOG"
+[[ $2 != list ]] || printf '%s\n' "$STUB_HERDR_WORKSPACES"
+EOF
+    STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/topic") STUB_TMUX_SESSIONS="$(sessions_attached \
+        widget/main "$LAYOUT/main" "$LAYOUT/main" 100 \
+        widget/topic "$LAYOUT/topic" "$LAYOUT/topic" 300)" \
+        STUB_TMUX_CURRENT=widget/topic TMUX=stub run wkt rm
+    [ "$status" -eq 0 ]
+    [ "$(herdr_calls)" = "$(printf '%s\n' "workspace list" "$LIST" "workspace close w1" "$CURRENT" \
+        "switch-client -t =widget/main" "kill-session -t =widget/topic")" ]
 }
 
 @test "closing the workspace fails: warns with the command, removes anyway" {
@@ -324,9 +430,9 @@ commit() { git commit --quiet --allow-empty -m "${1:-work}"; }
 
 # --- failure ---------------------------------------------------------------
 
-@test "git worktree remove fails: the branch and session stay, with git's status" {
+@test "git worktree remove fails: the branch, workspace and session stay, with git's status" {
     git worktree lock "$LAYOUT/topic"
-    STUB_TMUX_SESSIONS="$(sessions_attached \
+    STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/topic") STUB_TMUX_SESSIONS="$(sessions_attached \
         widget/main "$LAYOUT/main" "$LAYOUT/main" 100 \
         widget/topic "$LAYOUT/topic" "$LAYOUT/topic" 300)" \
         STUB_TMUX_CURRENT=widget/topic TMUX=stub run wkt rm
@@ -334,6 +440,7 @@ commit() { git commit --quiet --allow-empty -m "${1:-work}"; }
     contains "$output" "locked"
     [ -d "$LAYOUT/topic" ]
     has_branch topic
+    [ "$(herdr_calls)" = "workspace list" ]
     [ "$(tmux_calls)" = "$LIST" ]
     lacks "$output" "✓"
 }

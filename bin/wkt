@@ -146,8 +146,8 @@ Remove the worktree you're in, or the one that has <branch> checked out.
 Close its Herdr workspace and tmux session, if it has them, switching to
 another session first if you're in that one. Delete the local branch if its
 pull request was merged or the default branch already has it; the branch on
-origin is never touched. The main checkout and, in a .bare layout, the
-default branch's worktree can't be removed.
+origin is never touched. The main checkout and the default branch's worktree
+can't be removed.
 
 Options:
   -b <branch>   Remove the worktree that has <branch> checked out
@@ -481,13 +481,12 @@ unpushed() {
     fi
 }
 
-# branch_merged <branch> <base-ref>: true if the branch's tip is in <base-ref>,
-# or its pull request was merged, which a squash merge leaves git unable to
-# tell.
-branch_merged() {
-    git merge-base --is-ancestor "refs/heads/$1" "$2" 2>/dev/null && return 0
-    command -v gh >/dev/null 2>&1 &&
-        [[ "$(gh pr view "$1" --json state --jq .state 2>/dev/null || true)" == MERGED ]]
+# in_merged_pr <commit> <pr-state> <pr-head-oid>: true if the pull request was
+# merged and its head is the commit or has it, so the commit was pushed even
+# if a squash merge left no trace of it on origin. A head that isn't here
+# doesn't count.
+in_merged_pr() {
+    [[ $2 == MERGED ]] && git merge-base --is-ancestor "$1" "$3" 2>/dev/null
 }
 
 # main_worktree <common-git-dir> <default-branch>: where to go when a worktree
@@ -917,26 +916,34 @@ cmd_rm() {
     wt=${wt:A}
     git_dir=$(git -C "$wt" rev-parse --absolute-git-dir)
     [[ ${git_dir:A} != "$common_dir" ]] || die "Refusing to remove the main checkout."
-    [[ ${common_dir:t} != .bare || $branch != "$default" ]] ||
+    [[ $branch != "$default" ]] ||
         die "Refusing to remove the default branch's worktree."
 
-    local label=${branch:-${wt:t}} dirty ahead
+    local label=${branch:-${wt:t}} dirty
     if (( ! force )); then
         dirty=$(git -C "$wt" status --porcelain)
         [[ -z $dirty ]] ||
             die "'$label' has uncommitted changes or untracked files." \
                 "Commit, stash or delete them, or pass -f to remove it anyway."
+    fi
+
+    local base=refs/heads/$default head in_base=0 pr="" state="" oid="" ahead
+    git remote get-url origin >/dev/null 2>&1 && base=refs/remotes/origin/$default
+    head=$(git -C "$wt" rev-parse HEAD)
+    if git merge-base --is-ancestor "$head" "$base" 2>/dev/null; then
+        in_base=1
+    elif [[ -n $branch ]] && command -v gh >/dev/null 2>&1; then
+        # Asked before the folder goes, as gh may be running from it.
+        pr=$(gh pr view "$branch" --json state,headRefOid --jq '[.state,.headRefOid]|@tsv' 2>/dev/null || true)
+        IFS=$'\t' read -r state oid <<<"$pr" || true
+    fi
+    if (( ! force && ! in_base )) && ! in_merged_pr "$head" "$state" "$oid"; then
         ahead=$(unpushed "$wt" "$default")
         [[ -z $ahead ]] ||
             die "'$label' has commits that were never pushed." "Push them, or pass -f to remove it anyway."
     fi
-
-    local base=refs/heads/$default merged=0
-    git remote get-url origin >/dev/null 2>&1 && base=refs/remotes/origin/$default
-    # Asked before the folder goes, as gh may be running from it.
-    if [[ -n $branch ]] && branch_merged "$branch" "$base"; then
-        merged=1
-    fi
+    local merged=$in_base
+    [[ $state != MERGED ]] || merged=1
 
     local home ws session=""
     home=$(main_worktree "$common_dir" "$default")
@@ -949,28 +956,27 @@ cmd_rm() {
     # Later git and tmux calls need a current folder that outlives the worktree.
     cd "$common_dir"
 
-    local notes="" herdr_note="" err
-    if [[ -n $ws ]]; then
-        if err=$(herdr workspace close "$ws" 2>&1 >/dev/null); then
-            herdr_note="  ${OUT_BLUE}Herdr workspace closed${OUT_RESET}"
-        else
-            warn "Herdr didn't close the workspace${err:+: ${err%%$'\n'*}}"
-            print -ru2 -- "  To close it by hand: herdr workspace close ${(q-)ws}"
-        fi
-    fi
-
     local -a remove=(worktree remove)
     (( ! force )) || remove+=(--force)
     git "${remove[@]}" "$wt"
     drop_empty_dirs "$wt" "$branch"
 
+    local notes="" err
     if [[ -n $branch ]] && (( merged )); then
         git branch -D "$branch" >/dev/null
         notes="  ${OUT_BLUE}branch deleted${OUT_RESET}"
     elif [[ -n $branch ]]; then
         notes="  ${OUT_BLUE}branch kept: not merged into ${base#refs/*/}${OUT_RESET}"
     fi
-    notes+=$herdr_note
+
+    if [[ -n $ws ]]; then
+        if err=$(herdr workspace close "$ws" 2>&1 >/dev/null); then
+            notes+="  ${OUT_BLUE}Herdr workspace closed${OUT_RESET}"
+        else
+            warn "Herdr didn't close the workspace${err:+: ${err%%$'\n'*}}"
+            print -ru2 -- "  To close it by hand: herdr workspace close ${(q-)ws}"
+        fi
+    fi
 
     local moved=0 target
     if [[ -n $session && -n ${TMUX-} ]] &&

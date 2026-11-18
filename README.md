@@ -154,13 +154,13 @@ It won't rename the main checkout of a normal clone, a detached `HEAD`, or onto 
 
 Run it from inside a worktree to remove that worktree, or pass `-b <branch>`, anywhere in the repository, to remove the one that has `<branch>` checked out. It:
 
-1. Checks nothing would be lost. It stops if `git status` shows anything, untracked files included, or if the branch has commits that were never pushed: commits that aren't on its upstream, or without one, on none of origin's branches. In a repository without an origin, that means commits that aren't on the local default branch. `-f` removes the worktree anyway.
-2. Closes the worktree's Herdr workspace, if it has one. If Herdr can't, wkt warns with the command to run later and carries on.
-3. Removes the folder with `git worktree remove`, along with any folders a branch name with slashes left empty. If git can't remove it, wkt stops there, leaving the branch and the tmux session alone, and exits with git's status.
-4. Deletes the local branch if its pull request was merged, which it asks [`gh`](https://cli.github.com) about, since a squash merge leaves no trace git can see, or if origin's default branch already has the branch's last commit, as it does for a branch that was never used. Without an origin, the local default branch stands in for origin's. Otherwise it keeps the branch and says why. It never touches the branch on origin, and a detached worktree has no branch to delete.
+1. Checks nothing would be lost. It stops if `git status` shows anything, untracked files included, or if the branch has commits that were never pushed: commits that aren't on its upstream, or without one, on none of origin's branches. In a repository without an origin, that means commits that aren't on the local default branch. Nothing counts as never pushed when the default branch already has it, or when it's in a pull request that was merged, even after a squash merge deleted the branch on origin. A commit you made after the pull request's last one still counts. `-f` removes the worktree anyway.
+2. Removes the folder with `git worktree remove`, along with any folders a branch name with slashes left empty. If git can't remove it, wkt stops there, leaving the branch, the Herdr workspace and the tmux session alone, and exits with git's status.
+3. Deletes the local branch if its pull request was merged, or if origin's default branch already has the branch's last commit, as it does for a branch that was never used. Without an origin, the local default branch stands in for origin's. Otherwise it keeps the branch and says why. It never touches the branch on origin, and a detached worktree has no branch to delete.
+4. Closes the worktree's Herdr workspace, if it has one. If Herdr can't, wkt warns with the command to run later and carries on.
 5. Closes the worktree's [tmux session](#finding-a-worktrees-session), if it has one, as its very last step. If you're in that session, it first switches your client to the session you attached to most recently. If there's no other session, it opens one for the default branch's worktree, or a normal clone's main checkout, and switches to that, so you're never thrown out of tmux.
 
-It closes whatever workspace or session the worktree has, and needs no flag for either.
+It asks [`gh`](https://cli.github.com) about the branch's pull request once, before removing anything, since a squash merge leaves no trace git can see. It closes whatever workspace or session the worktree has, and needs no flag for either.
 
 ```console
 $ wkt rm -b fix-login
@@ -174,7 +174,7 @@ When you remove the worktree you're in, your shell is left in a folder that no l
 | `-b <branch>` | Remove the worktree that has `<branch>` checked out, instead of the one you're in |
 | `-f` | Remove it even with uncommitted changes, untracked files or commits that were never pushed |
 
-It won't remove the main checkout of a normal clone or the default branch's worktree in a `.bare` layout, and with `-b`, the branch must have a worktree.
+It won't remove the main checkout of a normal clone or the worktree that has the default branch checked out, in any layout, and with `-b`, the branch must have a worktree.
 
 ### `wkt setup`
 
