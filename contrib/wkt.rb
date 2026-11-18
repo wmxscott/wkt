@@ -3,7 +3,7 @@
 class Wkt < Formula
   desc "Git worktrees, opened as tmux sessions or Herdr workspaces on request"
   homepage "https://github.com/wmxscott/wkt"
-  url "https://github.com/wmxscott/wkt/archive/refs/tags/v2.1.0.tar.gz"
+  url "https://github.com/wmxscott/wkt/archive/refs/tags/v2.2.0.tar.gz"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "MIT"
   head "https://github.com/wmxscott/wkt.git", branch: "main"
@@ -17,7 +17,7 @@ class Wkt < Formula
 
   def caveats
     <<~EOS
-      Running wkt with no arguments opens a picker. It needs fzf 0.36 or newer:
+      Running wkt with no arguments opens a picker. It needs fzf 0.59 or newer:
         brew install fzf
       To have the picker follow macOS's light and dark mode, install
       https://github.com/wmxscott/theme-monitor, or set WKT_THEME.

@@ -25,10 +25,11 @@ setup() { common_setup; make_origin; }
 @test "old fzf: names both versions" {
     make_clone
     cd "$CLONE"
-    STUB_FZF_VERSION="0.30.0 (brew)" run --separate-stderr wkt
+    STUB_FZF_VERSION="0.58.1 (brew)" run --separate-stderr wkt
     [ "$status" -eq 1 ]
-    contains "$stderr" "0.30"
-    contains "$stderr" "0.36"
+    contains "$stderr" "0.58.1"
+    contains "$stderr" "0.59"
+    [ "$(fzf_calls)" -eq 0 ]
 }
 
 @test "fzf version is compared as numbers" {
@@ -36,7 +37,7 @@ setup() { common_setup; make_origin; }
     cd "$CLONE"
     STUB_FZF_VERSION=0.4.0 run --separate-stderr wkt
     [ "$status" -eq 1 ]
-    contains "$stderr" "0.36"
+    contains "$stderr" "0.59"
 
     fzf_reply 1 130
     STUB_FZF_VERSION=1.2.0 run --separate-stderr wkt
@@ -46,6 +47,12 @@ setup() { common_setup; make_origin; }
     rm -f "$STUB_FZF_DIR"/*
     fzf_reply 1 130
     STUB_FZF_VERSION=0.74.4 run --separate-stderr wkt
+    [ "$status" -ne 1 ]
+    lacks "$stderr" "error:"
+
+    rm -f "$STUB_FZF_DIR"/*
+    fzf_reply 1 130
+    STUB_FZF_VERSION=0.59.0 run --separate-stderr wkt
     [ "$status" -ne 1 ]
     lacks "$stderr" "error:"
 }
@@ -281,7 +288,19 @@ trigger() {
 @test "header: hints row" {
     make_layout
     run picker_input
-    contains "$(fzf_args 1)" $'\xe2\x86\xb5 open \xc2\xb7 ^n new \xc2\xb7 ^d remove \xc2\xb7 ^x remove merged \xc2\xb7 esc quit'
+    contains "$(fzf_args 1)" $'j/k move \xc2\xb7 / search \xc2\xb7 \xe2\x86\xb5 open \xc2\xb7 ^n new \xc2\xb7 ^d remove \xc2\xb7 ^x remove merged \xc2\xb7 esc quit'
+}
+
+LIST_KEYS='j:down,k:up,/:show-input+unbind(j,k,/)'
+
+@test "the list: j and k move, and / shows the hidden input line to search" {
+    make_layout
+    run picker_input
+    local args
+    args=$(fzf_args 1)
+    contains "$args" "--no-input"
+    contains "$args" $'--bind\n'"$LIST_KEYS"
+    lacks "$args" "--disabled"
 }
 
 @test "long paths are cut from the left" {
@@ -581,6 +600,48 @@ MACCHIATO_YELLOW="38;2;238;212;159"
     lacks "$sources" "HEAD"
     contains "$(fzf_input 3 | head -n 1)" "$ICO_HOME"
     contains "$(fzf_args 3)" "enter:accept-non-empty"
+}
+
+@test "source list: j and k move, and / searches, as in the list" {
+    make_layout
+    cd "$LAYOUT"
+    fzf_reply 1 0 "" ctrl-n ""
+    fzf_reply 2 1 topic
+    fzf_reply 3 130
+    fzf_reply 4 130
+    run wkt
+    local args
+    args=$(fzf_args 3)
+    contains "$args" $'--prompt\nSource: '
+    contains "$args" "--no-input"
+    contains "$args" $'--bind\n'"$LIST_KEYS"
+    contains "$args" $'j/k move \xc2\xb7 / search \xc2\xb7 \xe2\x86\xb5 use as source \xc2\xb7 esc discards'
+}
+
+@test "the input steps and confirmations type normally, with no j/k keys" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    fzf_reply 1 0 "" ctrl-n ""
+    fzf_reply 2 1 fresh
+    fzf_reply 3 0 main
+    fzf_reply 4 130
+    fzf_reply 5 0 "" ctrl-d "$(picked "$LAYOUT/topic")"
+    fzf_reply 6 1 n
+    fzf_reply 7 130
+    run wkt --herdr
+    [ "$status" -eq 130 ]
+    [ "$(fzf_calls)" -eq 7 ]
+    contains "$(fzf_args 2)" $'--prompt\nBranch: '
+    contains "$(fzf_args 4)" $'--prompt\nLabel: '
+    contains "$(fzf_args 6)" $'--prompt\nRemove topic? [y/N] '
+    local n
+    for n in 2 4 6; do
+        contains "$(fzf_args "$n")" "--disabled"
+        lacks "$(fzf_args "$n")" "--no-input"
+        lacks "$(fzf_args "$n")" "j:down"
+        lacks "$(fzf_args "$n")" "j/k move"
+    done
 }
 
 @test "existing branch skips the source step" {

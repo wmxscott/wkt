@@ -6,7 +6,7 @@
 emulate -R zsh
 setopt err_exit pipe_fail
 
-VERSION=2.1.0
+VERSION=2.2.0
 PROG=${0:t}
 SELF=${0:A}
 
@@ -1326,6 +1326,10 @@ ui_fzf() {
         --prompt "$prompt" --header "$header" "$@" || return
 }
 
+# UI_LIST_KEYS: fzf args for a list: j and k move and other letters type
+# nothing, until / shows the input line to search.
+typeset -ga UI_LIST_KEYS=(--no-input --bind 'j:down,k:up,/:show-input+unbind(j,k,/)')
+
 # ui_parse <fzf output>: split what fzf printed with --print-query and
 # --expect into UI_QUERY, UI_KEY and UI_SEL.
 typeset -g UI_QUERY= UI_KEY= UI_SEL=
@@ -1560,10 +1564,10 @@ ui_new() {
         ! git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
         ui_sources
         local out st=0
-        ui_header "$hints" "New worktree"
+        ui_header "j/k move · / search · $UI_ENTER use as source · esc discards" "New worktree"
         out=$(print -rl -- "${UI_SOURCES[@]}" |
-            ui_fzf 'Source: ' "$REPLY" --delimiter $'\t' --with-nth 1..2 --nth 2 --tabstop 1 \
-                --bind 'enter:accept-non-empty') || st=$?
+            ui_fzf 'Source: ' "$REPLY" "${UI_LIST_KEYS[@]}" --delimiter $'\t' --with-nth 1..2 --nth 2 \
+                --tabstop 1 --bind 'enter:accept-non-empty') || st=$?
         (( st != 130 )) || return 0
         (( st == 0 )) || die "fzf exited with status $st."
         args+=(-s "${out##*$'\t'}")
@@ -1675,8 +1679,8 @@ cmd_ui() {
     local -a words=(${(z)"$(fzf --version 2>/dev/null || true)"})
     local ver=${words[1]-} major minor
     major=${ver%%.*} minor=${${ver#*.}%%.*}
-    [[ $major == <-> && $minor == <-> ]] && (( major > 0 || minor >= 36 )) ||
-        die "The picker needs fzf 0.36 or newer; found ${ver:-an unknown version}." "brew upgrade fzf"
+    [[ $major == <-> && $minor == <-> ]] && (( major > 0 || minor >= 59 )) ||
+        die "The picker needs fzf 0.59 or newer; found ${ver:-an unknown version}." "brew upgrade fzf"
 
     ui_theme
     export WKT_THEME=$UI_THEME
@@ -1696,10 +1700,11 @@ cmd_ui() {
         fi
         [[ -d $PWD ]] || cd "$common_dir"
         ui_rows
-        ui_header "$UI_ENTER open · ^n new · ^d remove · ^x remove merged · esc quit" "" "$UI_NOTICE"
+        ui_header "j/k move · / search · $UI_ENTER open · ^n new · ^d remove · ^x remove merged · esc quit" "" "$UI_NOTICE"
         header=$REPLY UI_NOTICE=
-        local -a args=(--delimiter $'\t' --with-nth 1..3 --nth 2 --tabstop 1 --expect ctrl-n,ctrl-d,ctrl-x
-            --print-query --preview "${(q)SELF} __preview {4}" --preview-window 'right,40%,border-left')
+        local -a args=("${UI_LIST_KEYS[@]}" --delimiter $'\t' --with-nth 1..3 --nth 2 --tabstop 1
+            --expect ctrl-n,ctrl-d,ctrl-x --print-query
+            --preview "${(q)SELF} __preview {4}" --preview-window 'right,40%,border-left')
         (( UI_AT <= 1 )) || args+=(--bind "load:pos($UI_AT)")
 
         st=0
