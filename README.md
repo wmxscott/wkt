@@ -62,7 +62,7 @@ tmux is optional too, and wkt only opens a session when you pass `--tmux`. Then,
 
 The [picker](#the-picker) needs a little more:
 
-- **fzf** 0.36 or newer: `brew install fzf`. Only the picker uses it; every `wkt <command>` works without it.
+- **fzf** 0.59 or newer: `brew install fzf`. Only the picker uses it; every `wkt <command>` works without it.
 - **[wmxscott/theme-monitor](https://github.com/wmxscott/theme-monitor)** lets the picker follow macOS's light and dark mode through its trigger file. Without it, the picker asks macOS when it starts, or you can set `WKT_THEME`.
 - **A [Nerd Font](https://www.nerdfonts.com)** in your terminal, for the picker's icons.
 
@@ -85,12 +85,16 @@ Every command also takes `--help`.
 
 Run `wkt` on its own, anywhere in a repository, to pick one of its worktrees, make a new one, or remove them. It needs [fzf](#optional-dependencies).
 
-Each row shows a worktree's branch and folder. An icon at the end marks the worktree you're in, one that has a [tmux session](#finding-a-worktrees-session) or is open in Herdr, one whose folder is gone, or one that's locked. The pane on the right shows the highlighted worktree's upstream, changed files and recent commits. Typing searches branch names.
+Each row shows a worktree's branch and folder. An icon at the end marks the worktree you're in, one that has a [tmux session](#finding-a-worktrees-session) or is open in Herdr, one whose folder is gone, or one that's locked. The pane on the right shows the highlighted worktree's upstream, changed files and recent commits.
+
+The picker opens with search off: `j` and `k` move, as the arrow keys do, and other letters do nothing. `/` turns search on and shows the `>` prompt. From then on, everything you type, `j` and `k` included, searches branch names.
 
 | Key | |
 |---|---|
+| `j` / `k` | Move down or up, until you press `/` |
+| `/` | Search branch names |
 | `Enter` | Choose the highlighted worktree |
-| `Ctrl-N` | Make a new worktree, with what you typed as its branch name |
+| `Ctrl-N` | Make a new worktree, with what you searched for, if anything, as its branch name |
 | `Enter` with no matches | The same as `Ctrl-N` |
 | `Ctrl-D` | Remove the highlighted worktree, as `wkt rm -b <branch>` does, after asking |
 | `Ctrl-X` | Remove every merged worktree, as `wkt rm --merged` does, after showing which and asking |
@@ -99,7 +103,7 @@ Each row shows a worktree's branch and folder. An icon at the end marks the work
 A new worktree takes up to three steps:
 
 1. **Branch.** The name for the branch and its folder. It's checked before moving on.
-2. **Source.** The branch to start from. Skipped when the branch already exists locally or on origin.
+2. **Source.** The branch to start from, picked as in the list: `j` and `k` move, and `/` searches. Skipped when the branch already exists locally or on origin.
 3. **Label.** With `--herdr` only: the workspace's label. Leave it blank to let Herdr pick one, or press `Ctrl-O` to not open the worktree in Herdr. `--tmux` adds no step.
 
 `Esc` at any step goes back to the list. After the last step, it runs [`wkt new`](#wkt-new) with your answers.
