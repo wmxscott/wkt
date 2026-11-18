@@ -41,8 +41,8 @@ EOF
     ln -s "$SCRIPT" "$STUB_BIN/wkt"
     export HERDR_TAB_ID=stub-tab
 
-    # STUB_HERDR_FAIL=1 fails every herdr call; a subcommand, like worktree,
-    # fails only that one.
+    # STUB_HERDR_FAIL=1 fails every herdr call; a subcommand, like worktree or
+    # "workspace close", fails only that one.
     export STUB_HERDR_LOG="$TMP/herdr.log"
     cat >"$STUB_BIN/herdr" <<'EOF'
 #!/bin/bash
@@ -51,7 +51,7 @@ if env | grep '^HERDR_' | grep -qvx -e 'HERDR_TAB_ID=stub-tab' -e 'HERDR_ENV=1';
     exit 99
 fi
 printf '%s\n' "$*" >>"$STUB_HERDR_LOG"
-if [[ -n ${STUB_HERDR_FAIL:-} && ( $STUB_HERDR_FAIL == 1 || $STUB_HERDR_FAIL == "$1" ) ]]; then
+if [[ -n ${STUB_HERDR_FAIL:-} && ( $STUB_HERDR_FAIL == 1 || $STUB_HERDR_FAIL == "$1" || $STUB_HERDR_FAIL == "$1 $2" ) ]]; then
     echo '{"error":"server not running"}' >&2
     exit 1
 fi
@@ -182,14 +182,24 @@ sessions() {
     done
 }
 
-# workspaces <path>...: herdr's 'workspace list' reply, with a workspace per
-# path and one without a worktree.
-workspaces() {
-    local path list=""
-    for path in "$@"; do
-        list+='{"id":"w:'"$path"'","label":"x","worktree":{"checkout_path":"'"$path"'","is_linked_worktree":true}},'
+# sessions_attached <name> <tag> <path> <last-attached>...: the same, with
+# each session's session_last_attached.
+sessions_attached() {
+    while [ $# -ge 4 ]; do
+        printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4"
+        shift 4
     done
-    printf '{"id":"cli:workspace:list","result":{"type":"workspace_list","workspaces":[%s{"id":"w:none","label":"y"}]}}' "$list"
+}
+
+# workspaces <path>...: herdr's 'workspace list' reply: workspace w0 without a
+# worktree, then w1, w2 and so on, one per path.
+workspaces() {
+    local path n=0 list='{"focused":false,"label":"y","workspace_id":"w0"}'
+    for path in "$@"; do
+        n=$((n + 1))
+        list+=',{"active_tab_id":"w'"$n"':t1","label":"x","workspace_id":"w'"$n"'","worktree":{"checkout_path":"'"$path"'","is_linked_worktree":true}}'
+    done
+    printf '{"id":"cli:workspace:list","result":{"type":"workspace_list","workspaces":[%s]}}' "$list"
 }
 
 # fzf_reply <n> <code> [<line>...]: what the stub fzf does on call n.

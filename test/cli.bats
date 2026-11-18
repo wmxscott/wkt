@@ -38,7 +38,7 @@ setup() { common_setup; }
 }
 
 @test "command help exits 0" {
-    for cmd in setup adopt new rename; do
+    for cmd in setup adopt new rename rm; do
         run wkt "$cmd" --help
         [ "$status" -eq 0 ]
         starts_with "${lines[0]}" "Usage: wkt $cmd"
@@ -98,7 +98,7 @@ setup() { common_setup; }
 
 @test "help offers --herdr, not --no-herdr" {
     local cmd
-    for cmd in "" new rename; do
+    for cmd in "" new rename rm; do
         run wkt ${cmd:+"$cmd"} --help
         [ "$status" -eq 0 ]
         lacks "$output" "--no-herdr"
@@ -108,6 +108,8 @@ setup() { common_setup; }
     contains "$(wkt new --help)" "--tmux"
     lacks "$(wkt rename --help)" "--herdr"
     lacks "$(wkt rename --help)" "--tmux"
+    lacks "$(wkt rm --help)" "--herdr"
+    lacks "$(wkt rm --help)" "--tmux"
     run wkt --herdr --help
     [ "$status" -eq 0 ]
     starts_with "${lines[0]}" "Usage: wkt"
@@ -154,6 +156,29 @@ setup() { common_setup; }
     contains "$output" "tmux session"
 }
 
+@test "rm: argument errors" {
+    run wkt rm -q
+    [ "$status" -eq 2 ]
+    contains "$output" "Unknown option: -q"
+    contains "$output" "Run 'wkt rm --help' for usage."
+
+    run wkt rm -b
+    [ "$status" -eq 2 ]
+    contains "$output" "Option -b needs a value."
+
+    run wkt rm -b a b
+    [ "$status" -eq 2 ]
+    contains "$output" "Unexpected argument: b"
+
+    run wkt rm --herdr
+    [ "$status" -eq 2 ]
+    contains "$output" "rm doesn't take --herdr"
+
+    run wkt rm -b a --tmux
+    [ "$status" -eq 2 ]
+    contains "$output" "rm doesn't take --tmux"
+}
+
 @test "setup: argument errors" {
     run wkt setup
     [ "$status" -eq 2 ]
@@ -197,6 +222,13 @@ setup() { common_setup; }
     run wkt rename -b topic
     [ "$status" -eq 1 ]
     contains "$output" "Not inside a Git worktree."
+}
+
+@test "rm outside a repository" {
+    mkdir empty && cd empty
+    run wkt rm -b topic
+    [ "$status" -eq 1 ]
+    contains "$output" "Not inside a Git repository."
 }
 
 @test "output has no colour when not a terminal" {

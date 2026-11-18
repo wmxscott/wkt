@@ -46,7 +46,7 @@ Usage: $PROG <command> [options]
 
 Git worktrees in a .bare layout. With --herdr, a new or picked worktree
 opens as a Herdr workspace; with --tmux, new opens it as a tmux session.
-rename keeps an open workspace or session in step.
+rename and rm keep an open workspace or session in step.
 
 Commands:
   (no command) [--herdr]          Pick or create a worktree (needs fzf) and
@@ -62,6 +62,9 @@ Commands:
                                   Rename the current worktree's branch,
                                   directory, Herdr workspace and tmux
                                   session
+  rm [-b <branch>] [-f]           Remove the current worktree, or <branch>'s,
+                                  with its Herdr workspace and tmux session,
+                                  and its branch if merged
 
 Options:
   -h, --help                      Show this help, or '$PROG <command> --help'
@@ -132,6 +135,25 @@ Options:
   -y               Don't ask before renaming a remote branch that has an
                    open pull request
   -h, --help       Show this help
+EOF
+}
+
+usage_rm() {
+    cat <<EOF
+Usage: $PROG rm [-b <branch>] [-f]
+
+Remove the worktree you're in, or the one that has <branch> checked out.
+Close its Herdr workspace and tmux session, if it has them, switching to
+another session first if you're in that one. Delete the local branch if its
+pull request was merged or the default branch already has it; the branch on
+origin is never touched. The main checkout and, in a .bare layout, the
+default branch's worktree can't be removed.
+
+Options:
+  -b <branch>   Remove the worktree that has <branch> checked out
+  -f            Remove it even with uncommitted changes, untracked files or
+                commits that were never pushed
+  -h, --help    Show this help
 EOF
 }
 
@@ -302,32 +324,39 @@ herdr_open() {
 }
 
 # herdr_paths: fill HERDR_PATHS with the worktree paths open as Herdr
-# workspaces. Empty if Herdr isn't installed or doesn't answer.
+# workspaces, each mapped to its workspace's id. Empty if Herdr isn't
+# installed or doesn't answer.
 typeset -gA HERDR_PATHS
 herdr_paths() {
     HERDR_PATHS=()
     command -v herdr >/dev/null 2>&1 || return 0
-    local json found
+    local json id found
     json=$(herdr workspace list 2>/dev/null || true)
-    while [[ $json == *'"checkout_path":"'* ]]; do
-        json=${json#*'"checkout_path":"'}
-        found=${json%%'"'*}
-        [[ -z $found ]] || HERDR_PATHS[${found:A}]=1
+    # Herdr puts workspace_id just before worktree, so the text up to the
+    # next workspace_id holds this workspace's checkout_path, if it has one.
+    while [[ $json == *'"workspace_id":"'* ]]; do
+        json=${json#*'"workspace_id":"'}
+        id=${json%%'"'*}
+        found=${json%%'"workspace_id":"'*}
+        [[ $found == *'"checkout_path":"'* ]] || continue
+        found=${${found#*'"checkout_path":"'}%%'"'*}
+        [[ -z $found ]] || HERDR_PATHS[${found:A}]=$id
     done
 }
 
-# tmux_sessions: fill TMUX_NAMES, TMUX_TAGS and TMUX_DIRS with each tmux
-# session's name, @wkt-worktree and session_path. Empty if tmux isn't
-# installed or no server is running.
-typeset -ga TMUX_NAMES TMUX_TAGS TMUX_DIRS
+# tmux_sessions: fill TMUX_NAMES, TMUX_TAGS, TMUX_DIRS and TMUX_LAST with each
+# tmux session's name, @wkt-worktree, session_path and session_last_attached.
+# Empty if tmux isn't installed or no server is running.
+typeset -ga TMUX_NAMES TMUX_TAGS TMUX_DIRS TMUX_LAST
 tmux_sessions() {
-    TMUX_NAMES=() TMUX_TAGS=() TMUX_DIRS=()
+    TMUX_NAMES=() TMUX_TAGS=() TMUX_DIRS=() TMUX_LAST=()
     command -v tmux >/dev/null 2>&1 || return 0
     local line
     local -a row
-    for line in ${(f)"$(tmux list-sessions -F $'#{session_name}\t#{@wkt-worktree}\t#{session_path}' 2>/dev/null || true)"}; do
+    for line in ${(f)"$(tmux list-sessions -F $'#{session_name}\t#{@wkt-worktree}\t#{session_path}\t#{session_last_attached}' 2>/dev/null || true)"}; do
         row=("${(@ps:\t:)line}")
         TMUX_NAMES+=("${row[1]}") TMUX_TAGS+=("${row[2]-}") TMUX_DIRS+=("${${row[3]-}:A}")
+        TMUX_LAST+=("${${row[4]//[^0-9]/}:-0}")
     done
 }
 
@@ -416,6 +445,71 @@ tmux_rename() {
         warn "tmux didn't update session $1${err:+: ${err%%$'\n'*}}"
         return 1
     fi
+}
+
+# tmux_leave <session> <worktree-path>: switch the client from the session to
+# the most recently attached other one, or if there's none, to the worktree's,
+# opening it. Needs tmux_sessions first. A failing tmux only warns; the status
+# says whether the client moved.
+tmux_leave() {
+    local i to="" last=-1 err
+    for (( i = 1; i <= ${#TMUX_NAMES}; i++ )); do
+        if [[ ${TMUX_NAMES[i]} != "$1" ]] && (( TMUX_LAST[i] > last )); then
+            to=${TMUX_NAMES[i]} last=${TMUX_LAST[i]}
+        fi
+    done
+    if [[ -z $to ]]; then
+        tmux_open "$2" "$(git -C "$2" branch --show-current)"
+    elif ! err=$(tmux switch-client -t "=$to" 2>&1 >/dev/null); then
+        warn "tmux didn't switch to $to${err:+: ${err%%$'\n'*}}"
+        return 1
+    fi
+}
+
+# unpushed <worktree-path> <default-branch>: the commits at the worktree's
+# HEAD that were never pushed: those not on its upstream, else not on origin,
+# else, with no origin, not on the local default branch.
+unpushed() {
+    if git -C "$1" rev-parse --verify --quiet '@{u}' >/dev/null 2>&1; then
+        git -C "$1" rev-list '@{u}..HEAD'
+    elif git -C "$1" remote get-url origin >/dev/null 2>&1; then
+        git -C "$1" rev-list HEAD --not --remotes=origin
+    else
+        local base
+        base=$(git -C "$1" rev-parse --verify --quiet "refs/heads/$2" || true)
+        git -C "$1" rev-list HEAD --not ${base}
+    fi
+}
+
+# branch_merged <branch> <base-ref>: true if the branch's tip is in <base-ref>,
+# or its pull request was merged, which a squash merge leaves git unable to
+# tell.
+branch_merged() {
+    git merge-base --is-ancestor "refs/heads/$1" "$2" 2>/dev/null && return 0
+    command -v gh >/dev/null 2>&1 &&
+        [[ "$(gh pr view "$1" --json state --jq .state 2>/dev/null || true)" == MERGED ]]
+}
+
+# main_worktree <common-git-dir> <default-branch>: where to go when a worktree
+# is removed: the main checkout, or in a .bare layout the default branch's
+# worktree, else the layout's folder.
+main_worktree() {
+    if [[ ${1:t} == .bare ]]; then
+        worktree_for_branch "$2" || print -r -- "${1:h}"
+    else
+        local -a lines=("${(@f)$(git worktree list --porcelain)}")
+        print -r -- "${lines[1]#worktree }"
+    fi
+}
+
+# drop_empty_dirs <worktree-path> <branch>: remove the folders a branch name
+# with slashes left empty above a worktree that has moved or gone.
+drop_empty_dirs() {
+    [[ $1 == */"$2" ]] || return 0
+    local base=${1%/"$2"} dir=${1:h}
+    while [[ $dir == "$base"/* ]] && rmdir "$dir" 2>/dev/null; do
+        dir=${dir:h}
+    done
 }
 
 cmd_setup() {
@@ -773,12 +867,7 @@ cmd_rename() {
 
     mkdir -p "${new_path:h}"
     git -C "$common_dir" worktree move "$old_path" "$new_path"
-
-    # Drop directories left empty by a branch name with slashes.
-    local dir=${old_path:h}
-    while [[ $dir == $base/* ]] && rmdir "$dir" 2>/dev/null; do
-        dir=${dir:h}
-    done
+    drop_empty_dirs "$old_path" "$old_branch"
 
     local notes=""
     if (( had_workspace )) && herdr_open "$common_dir" "$new_path" "${new_name:-$new_branch}"; then
@@ -790,6 +879,118 @@ cmd_rename() {
 
     print -r -- "${OUT_GREEN}✓${OUT_RESET} ${old_branch} → ${new_branch}  $(tildify "$new_path")${notes}"
     print -r -- "${OUT_YELLOW}→${OUT_RESET} your shell is still in the old directory; run: cd ${(q-)new_path}"
+}
+
+cmd_rm() {
+    wants_help "$@" && { usage_rm; exit 0; }
+    take_open_flags rm "$@"
+    [[ -z $OPEN_IN ]] ||
+        usage_error rm "rm doesn't take --$OPEN_IN; it closes a worktree's Herdr workspace and tmux session on its own."
+    set -- "${ARGS[@]}"
+    local named="" force=0 opt
+    local OPTIND=1 OPTARG
+    while getopts ":b:fh" opt; do
+        case $opt in
+            b ) named=$OPTARG ;;
+            f ) force=1 ;;
+            h ) usage_rm; exit 0 ;;
+            : ) usage_error rm "Option -$OPTARG needs a value." ;;
+            * ) usage_error rm "Unknown option: -$OPTARG" ;;
+        esac
+    done
+    shift $(( OPTIND - 1 ))
+    [[ $# -gt 0 ]] && usage_error rm "Unexpected argument: $1"
+
+    git rev-parse --git-dir >/dev/null 2>&1 || die "Not inside a Git repository."
+    local common_dir default wt branch=$named git_dir
+    common_dir=$(common_git_dir)
+    default=$(detect_default_branch)
+    if [[ -n $named ]]; then
+        wt=$(worktree_for_branch "$named" || true)
+        [[ -n $wt ]] || die "No worktree has '$named' checked out."
+    else
+        [[ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" == true ]] ||
+            die "Not inside a Git worktree." "Run it from the worktree to remove, or name its branch with -b."
+        wt=$(git rev-parse --show-toplevel)
+        branch=$(git branch --show-current)
+    fi
+    wt=${wt:A}
+    git_dir=$(git -C "$wt" rev-parse --absolute-git-dir)
+    [[ ${git_dir:A} != "$common_dir" ]] || die "Refusing to remove the main checkout."
+    [[ ${common_dir:t} != .bare || $branch != "$default" ]] ||
+        die "Refusing to remove the default branch's worktree."
+
+    local label=${branch:-${wt:t}} dirty ahead
+    if (( ! force )); then
+        dirty=$(git -C "$wt" status --porcelain)
+        [[ -z $dirty ]] ||
+            die "'$label' has uncommitted changes or untracked files." \
+                "Commit, stash or delete them, or pass -f to remove it anyway."
+        ahead=$(unpushed "$wt" "$default")
+        [[ -z $ahead ]] ||
+            die "'$label' has commits that were never pushed." "Push them, or pass -f to remove it anyway."
+    fi
+
+    local base=refs/heads/$default merged=0
+    git remote get-url origin >/dev/null 2>&1 && base=refs/remotes/origin/$default
+    # Asked before the folder goes, as gh may be running from it.
+    if [[ -n $branch ]] && branch_merged "$branch" "$base"; then
+        merged=1
+    fi
+
+    local home ws session=""
+    home=$(main_worktree "$common_dir" "$default")
+    herdr_paths
+    ws=${HERDR_PATHS[$wt]-}
+    tmux_sessions
+    if tmux_find "$wt"; then
+        session=$REPLY
+    fi
+    # Later git and tmux calls need a current folder that outlives the worktree.
+    cd "$common_dir"
+
+    local notes="" herdr_note="" err
+    if [[ -n $ws ]]; then
+        if err=$(herdr workspace close "$ws" 2>&1 >/dev/null); then
+            herdr_note="  ${OUT_BLUE}Herdr workspace closed${OUT_RESET}"
+        else
+            warn "Herdr didn't close the workspace${err:+: ${err%%$'\n'*}}"
+            print -ru2 -- "  To close it by hand: herdr workspace close ${(q-)ws}"
+        fi
+    fi
+
+    local -a remove=(worktree remove)
+    (( ! force )) || remove+=(--force)
+    git "${remove[@]}" "$wt"
+    drop_empty_dirs "$wt" "$branch"
+
+    if [[ -n $branch ]] && (( merged )); then
+        git branch -D "$branch" >/dev/null
+        notes="  ${OUT_BLUE}branch deleted${OUT_RESET}"
+    elif [[ -n $branch ]]; then
+        notes="  ${OUT_BLUE}branch kept: not merged into ${base#refs/*/}${OUT_RESET}"
+    fi
+    notes+=$herdr_note
+
+    local moved=0 target
+    if [[ -n $session && -n ${TMUX-} ]] &&
+        [[ "$(tmux display-message -p '#{session_name}' 2>/dev/null || true)" == "$session" ]]; then
+        if tmux_leave "$session" "$home"; then
+            moved=1
+        else
+            target="=$session"
+            print -ru2 -- "  Left $session open; to close it: tmux kill-session -t ${(q-)target}"
+            session=""
+        fi
+    fi
+    [[ -z $session ]] || notes+="  ${OUT_BLUE}tmux session ${session} closed${OUT_RESET}"
+
+    print -r -- "${OUT_GREEN}✓${OUT_RESET} removed ${label}  $(tildify "$wt")${notes}"
+    [[ -n $named ]] || (( moved )) || step "your folder is gone; run: cd ${(q-)home}"
+    # Last, after all output: wkt is likely running in this session.
+    if [[ -n $session ]] && ! err=$(tmux kill-session -t "=$session" 2>&1 >/dev/null); then
+        warn "tmux didn't close session $session${err:+: ${err%%$'\n'*}}"
+    fi
 }
 
 # ui_theme: pick light or dark (WKT_THEME, then theme-monitor's trigger file,
@@ -1241,6 +1442,7 @@ case "${1-}" in
     adopt ) shift; cmd_adopt "$@" ;;
     new ) shift; cmd_new "$@" ;;
     rename ) shift; cmd_rename "$@" ;;
+    rm ) shift; cmd_rm "$@" ;;
     -h | --help | help ) usage ;;
     -V | --version ) print -r -- "wkt $VERSION" ;;
     __preview ) shift; ui_theme; ui_preview "$@" ;;
