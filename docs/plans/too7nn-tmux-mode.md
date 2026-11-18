@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | in progress · next: A5 |
+| **Status** | in progress · next: A6 |
 | **Updated** | 2026-11-17 |
 | **Tracker** | — |
 | **Related** | [approved design](../superpowers/specs/2026-11-17-tmux-mode-design.md); tmux core design in `wmxscott/dotfiles`, `docs/superpowers/specs/2026-11-16-tmux-core-design.md` |
@@ -169,7 +169,7 @@ wkt opens worktrees as tmux sessions when asked with `--tmux`, keeps them in ste
 ### `wkt rm --merged`
 - Collect the candidates (S11), print them, ask, then remove each one as `rm` would.
 - The session you're in goes last, so S10 runs once.
-- **Summary:** a count of removed and skipped worktrees, with each skipped one and its reason.
+- **Summary:** a count of removed and skipped worktrees. Each skipped one, with its reason, is listed before the question rather than at the end.
 
 ### Picker
 `wkt [--tmux | --herdr]`
@@ -423,3 +423,4 @@ Ask of every PR:
 - 2026-11-17: phase A2 landed as #11. Plan amended with S19 and the Tag line, for the `=<name>:` target that A2 found.
 - 2026-11-17: phase A3 landed as #12. tmux 3.8 can't change `session_path` cleanly, so a renamed session keeps its old starting folder and the tag carries the new path, as the Renaming contract allowed.
 - 2026-11-17: phase A4 landed as #13. Plan amended with S20: squash-merged commits count as pushed, the branch is deleted only when nothing would be lost, the default branch is protected in every layout, and Herdr closes late.
+- 2026-11-17: phase A5 landed as #14. Skipped worktrees are listed before the question, and the summary only counts them.

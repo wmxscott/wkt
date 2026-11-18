@@ -177,6 +177,22 @@ setup() { common_setup; }
     run wkt rm -b a --tmux
     [ "$status" -eq 2 ]
     contains "$output" "rm doesn't take --tmux"
+
+    run wkt rm --merged -f
+    [ "$status" -eq 2 ]
+    contains "$output" "--merged can't be used with -b or -f."
+
+    run wkt rm -b a --merged
+    [ "$status" -eq 2 ]
+    contains "$output" "--merged can't be used with -b or -f."
+
+    run wkt rm -y
+    [ "$status" -eq 2 ]
+    contains "$output" "-y only goes with --merged."
+
+    run wkt rm --merged extra
+    [ "$status" -eq 2 ]
+    contains "$output" "Unexpected argument: extra"
 }
 
 @test "setup: argument errors" {
