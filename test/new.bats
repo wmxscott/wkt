@@ -287,14 +287,15 @@ setup() {
 
 # --- opening ---------------------------------------------------------------
 
-@test "without --herdr: herdr isn't called, even inside Herdr" {
+@test "without --herdr or --tmux: neither is called, even inside them" {
     make_layout
     cd "$LAYOUT/main"
-    run --separate-stderr wkt new -b topic -n "Label"
+    TMUX=stub run --separate-stderr wkt new -b topic -n "Label"
     [ "$status" -eq 0 ]
     [ -d "$LAYOUT/topic" ]
     lacks "$stderr" "warning"
     [ -z "$(herdr_calls)" ]
+    [ -z "$(tmux_calls)" ]
     [ "$(last_line)" = "✓ topic (Label)  ../topic" ]
 
     unset HERDR_TAB_ID

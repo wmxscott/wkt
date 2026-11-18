@@ -239,6 +239,26 @@ is_worktree() {
     return 1
 }
 
+# org_repo <common-git-dir>: set REPO_ORG and REPO_NAME from origin's URL,
+# so git@github.com:acme/widget.git gives acme and widget. Without an origin,
+# they're local and the repository's folder name.
+typeset -g REPO_ORG= REPO_NAME=
+org_repo() {
+    local dir=$1 url
+    url=$(git config --get remote.origin.url 2>/dev/null || true)
+    if [[ -n $url ]]; then
+        url=${url#*://}
+        url=${url#*@}
+        url=${url/://}
+        url=${${url%/}%.git}
+        REPO_ORG=${url:h:t} REPO_NAME=${url:t}
+    elif [[ ${dir:t} == (.git|.bare) ]]; then
+        REPO_ORG=local REPO_NAME=${dir:h:t}
+    else
+        REPO_ORG=local REPO_NAME=${${dir:t}%.git}
+    fi
+}
+
 # The root that worktrees of normal repos live under.
 worktree_root() {
     local root=${WKT_ROOT:-$HOME/.herdr/worktrees}
@@ -447,26 +467,10 @@ cmd_new() {
         # Normal repo: keep worktrees out of the checkout, under
         # <root>/<org>/<repo>/<branch>, named from origin's URL.
         is_bare=0
-        local remote_url path_part org repo
-        remote_url=$(git config --get remote.origin.url 2>/dev/null || true)
-        if [[ -n "$remote_url" ]]; then
-            path_part="${remote_url#*://}"
-            path_part="${path_part#*@}"
-            path_part="${path_part/://}"
-            path_part="${${path_part%/}%.git}"
-            org=${path_part:h:t}
-            repo=${path_part:t}
-        else
-            org="local"
-            if [[ ${common_dir:t} == .git ]]; then
-                repo=${common_dir:h:t}
-            else
-                repo=${${common_dir:t}%.git}
-            fi
-        fi
+        org_repo "$common_dir"
         local root
         root=$(worktree_root)
-        target_path="${root}/${org}/${repo}/${new_branch}"
+        target_path="${root}/${REPO_ORG}/${REPO_NAME}/${new_branch}"
     fi
 
     local existing
