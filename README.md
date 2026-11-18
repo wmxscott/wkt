@@ -2,28 +2,38 @@
 
 [![CI](https://github.com/wmxscott/wkt/actions/workflows/ci.yml/badge.svg)](https://github.com/wmxscott/wkt/actions/workflows/ci.yml)
 
-Git worktrees in a predictable place, one command each. Ask, and they open as [Herdr](https://herdr.dev) workspaces, which stay in sync with them when you rename a branch.
+Git worktrees in a predictable place, one command each. wkt prints the worktree's path, or when you ask, opens it as a tmux session or a Herdr workspace. Renaming or removing the worktree keeps its session and workspace in step.
 
-Give each piece of work its own git worktree and parallel tasks, or coding agents, can't trip over each other's checkouts. wkt makes that one command: it puts the worktree in a predictable place and starts the branch from a freshly fetched default branch. When the branch earns a better name, one more command renames the branch, its directory and the branch on origin together.
+Give each piece of work its own git worktree and parallel tasks, or coding agents, can't trip over each other's checkouts. wkt makes that one command: it puts the worktree in a predictable place and starts the branch from a freshly fetched default branch. When the branch earns a better name, one more command renames the branch, its directory and the branch on origin together. When the work is merged, `wkt rm` removes the worktree and its branch, and `wkt rm --merged` clears out every merged one at once.
 
-Herdr runs coding agents in persistent terminal workspaces. Pass `--herdr` and wkt also opens the worktree as a Herdr workspace. A rename moves a worktree's workspace with it, whether or not you ask. Pass `--tmux` instead and `wkt new` opens the worktree as a [tmux session](#tmux).
+`wkt new` gives you the worktree one of three ways:
+
+- **On its own**, it prints the path and opens nothing.
+- **With `--tmux`**, it opens the worktree's own [tmux session](#tmux) and switches you to it, or outside tmux, says how to attach.
+- **With `--herdr`**, it opens the worktree as a workspace in [Herdr](https://herdr.dev), which runs coding agents in persistent terminal workspaces.
 
 ```console
-$ wkt new -b fix-login --herdr
+$ wkt new -b fix-login
 → updating main from origin
 → branching from origin/main
+✓ fix-login  ~/.herdr/worktrees/acme/widget/fix-login
+$ wkt new -b fix-login --tmux
+✓ fix-login  ~/.herdr/worktrees/acme/widget/fix-login  opened in tmux
+$ wkt new -b fix-login --herdr
 ✓ fix-login  ~/.herdr/worktrees/acme/widget/fix-login  opened in Herdr
 ```
 
+`wkt rename` and `wkt rm` find the worktree's session and workspace on their own, so they need neither flag.
+
 ## Why not `herdr worktree create`?
 
-Herdr can create worktrees itself, and wkt uses Herdr's `worktree open` to show them. The difference is what happens around the checkout:
+Herdr can create worktrees itself, and `wkt new --herdr` uses Herdr's `worktree open` to show them. But Herdr is optional: `--tmux` opens the worktree in tmux instead, and without either, wkt opens nothing. Wherever you open it, the difference is what happens around the checkout:
 
 - **Remote branches.** A branch that only exists on origin is checked out tracking it. Herdr creates a new branch of that name from `--base` or `HEAD` instead.
 - **Fresh starting point.** A new branch starts from the default branch, or `-s <source>`, after fetching it from origin, so it isn't based on a stale local copy.
-- **Reopening.** Asking again for a branch that already has a worktree, wherever it is, opens that worktree.
-- **Renaming.** Herdr has no rename for worktrees. `wkt rename` renames the branch locally and on origin, moves the directory and points the worktree's Herdr workspace, if it has one, at the new path.
-- **Removing.** `wkt rm` closes the worktree's Herdr workspace and tmux session, removes the folder, and deletes the branch once its pull request is merged, refusing when that would lose work.
+- **Reopening.** Asking again for a branch that already has a worktree, wherever it is, gives you that worktree, and `--tmux` switches to its session if it already has one.
+- **Renaming.** Herdr has no rename for worktrees. `wkt rename` renames the branch locally and on origin, moves the directory, points the worktree's Herdr workspace at the new path and renames its tmux session, if it has them.
+- **Removing.** `wkt rm` removes the folder, closes the worktree's Herdr workspace and tmux session, and deletes the branch once its pull request is merged, refusing when that would lose work.
 - **`.bare` layouts.** `wkt setup` clones a repository into a layout where every branch is a sibling folder, `wkt adopt` converts a clone you already have, and `wkt new` keeps to it.
 
 ## Install
@@ -48,7 +58,7 @@ install wkt/bin/wkt ~/.local/bin/
 
 Herdr is optional, and wkt never opens anything in it unless you pass `--herdr`. Then, if `herdr` isn't on your `PATH` or can't reach the server, wkt still does the git work, prints a warning with the `herdr` command to run later, and exits successfully. The picker, `wkt rename` and `wkt rm` also ask Herdr which worktrees have a workspace, and say nothing when it isn't there to answer.
 
-tmux is optional too, and wkt only opens a session when you pass `--tmux`. Then, if `tmux` isn't on your `PATH`, or a tmux command fails, wkt still does the git work, warns, and exits successfully. `wkt rename` and `wkt rm` also ask tmux which session has the worktree, and say nothing when there's no tmux to answer.
+tmux is optional too, and wkt only opens a session when you pass `--tmux`. Then, if `tmux` isn't on your `PATH`, or a tmux command fails, wkt still does the git work, warns, and exits successfully. The picker, `wkt rename` and `wkt rm` also ask tmux which session has the worktree, and say nothing when there's no tmux to answer.
 
 The [picker](#the-picker) needs a little more:
 
@@ -94,7 +104,7 @@ A new worktree takes up to three steps:
 
 `Esc` at any step goes back to the list. After the last step, it runs [`wkt new`](#wkt-new) with your answers.
 
-The picker prints the chosen worktree's path and nothing else. `wkt --tmux` opens its [tmux session](#tmux) instead, as `wkt new --tmux` does: inside tmux, it switches you to it, and outside, it says how to attach. `wkt --herdr` opens it as a Herdr workspace. Either way it prints nothing, unless the worktree couldn't be opened; then it warns and prints the path. A new worktree opens the same way.
+The picker prints the chosen worktree's path and nothing else. `wkt --tmux` opens its [tmux session](#tmux) instead, as `wkt new --tmux` does: inside tmux, it switches you to it, and outside, it says how to attach. `wkt --herdr` opens it as a Herdr workspace. Either way it prints no path, unless the worktree couldn't be opened; then it warns and prints the path. A new worktree opens the same way.
 
 `Ctrl-D` and `Ctrl-X` ask `y/N` on an input line before removing anything. `Ctrl-D` names the branch. `Ctrl-X` lists what it would remove and what it would skip, or says there's nothing to remove and doesn't ask. Both follow [`wkt rm`](#wkt-rm)'s rules, without `-f`: a worktree it refuses, such as one with uncommitted changes, stays, and why shows above the list. Otherwise the list comes back without what went, and what `wkt rm` said shows above it. If what you removed had the tmux session you're in, wkt switches you to another session, closes that one, and quits.
 
@@ -220,7 +230,7 @@ widget/
 └── main/      a worktree for the default branch
 ```
 
-It configures origin to fetch every branch and sets the default branch's worktree to track origin's. It doesn't open anything in Herdr.
+It configures origin to fetch every branch and sets the default branch's worktree to track origin's.
 
 ### `wkt adopt`
 
@@ -312,6 +322,7 @@ wkt has no config file. It reads these environment variables:
 | `WKT_THEME` | `auto` | The picker's colours: `light`, `dark` or `auto`. `auto` follows theme-monitor's trigger file, else macOS's setting |
 | `XDG_DATA_HOME` | `~/.local/share` | Where the picker looks for theme-monitor's `theme-monitor/theme-change.trigger` |
 | `NO_COLOR` | *(unset)* | Set to anything to turn off coloured output. The picker keeps its icons. Output is plain whenever it isn't going to a terminal |
+| `TMUX` | *(set by tmux)* | Tells wkt it's inside tmux, so `--tmux` switches your client instead of printing how to attach, and `wkt rm` moves you off a session before closing it. Without `--tmux`, `wkt new` and the picker open nothing, set or not |
 
 For example, in `~/.zshenv`:
 
@@ -323,14 +334,16 @@ export WKT_ROOT=~/src/worktrees
 
 | Status | |
 |---|---|
-| `0` | Done. This includes when tmux or Herdr couldn't be reached, which only warns |
-| `2` | Bad arguments, or plain `wkt` without a terminal |
+| `0` | Done. This includes when opening, switching to or closing a tmux session or Herdr workspace didn't work, which only warns |
+| `1` | wkt refused or something went wrong, such as not being in a repository, a folder in the way, or work that would be lost. Also when `wkt rename` or `wkt rm --merged` asks first and you answer anything but `y`, or there's no terminal to ask on and no `-y`, and when `wkt rm --merged` couldn't remove one of the worktrees |
+| `2` | Bad arguments, including flags that clash: `--tmux` with `--herdr`, either of them with `rename` or `rm`, and `rm --merged` with `-b` or `-f`. Also plain `wkt` without a terminal |
 | `130` | The picker was closed with `Esc` |
-| Anything else | Something went wrong, such as not being in a repository or a folder in the way. A failing git command passes on its own status |
+
+A git command that fails passes on its own status instead of `1`.
 
 ## Coding agents
 
-An agent skill that teaches coding agents to start work with `wkt new` and rename it with `wkt rename` ships as the `herdr` plugin in [wmxscott/ai-toolkit](https://github.com/wmxscott/ai-toolkit).
+An agent skill that teaches coding agents to start work with `wkt new` and rename it with `wkt rename` ships as the `wkt` plugin in [wmxscott/ai-toolkit](https://github.com/wmxscott/ai-toolkit).
 
 ## Development
 
@@ -340,7 +353,7 @@ bats test
 zsh -n bin/wkt
 ```
 
-The tests use [bats](https://github.com/bats-core/bats-core). Each one runs in a temporary folder against a local bare repository standing in for origin, with a throwaway `HOME`, every `HERDR_*` variable removed except a dummy `HERDR_TAB_ID`, so they also show wkt opens nothing in Herdr unasked, `TMUX` and `TMUX_PANE` removed, and stub `herdr`, `tmux`, `gh`, `fzf` and `defaults` commands first on `PATH`. They never touch a running Herdr or tmux server, GitHub, your terminal or your own repositories. The stub `herdr` and `tmux` record their arguments, so the tests check exactly what wkt asks of them. The stub `fzf` records what it was given and plays back answers each test scripts, and fails loudly when a test didn't expect a call.
+The tests use [bats](https://github.com/bats-core/bats-core). Each one runs in a temporary folder against a local bare repository standing in for origin, with a throwaway `HOME`, `TMUX` and `TMUX_PANE` removed, and stub `herdr`, `tmux`, `gh`, `fzf` and `defaults` commands first on `PATH`. Every `HERDR_*` variable is removed too, except a dummy `HERDR_TAB_ID`, which wkt 1.x took to mean it was inside Herdr, so every test also shows wkt opens nothing in Herdr unasked. They never touch a running Herdr or tmux server, GitHub, your terminal or your own repositories. The stub `herdr` and `tmux` record their arguments, so the tests check exactly what wkt asks of them. The stub `fzf` records what it was given and plays back answers each test scripts, and fails loudly when a test didn't expect a call.
 
 `contrib/wkt.rb` is the Homebrew formula.
 

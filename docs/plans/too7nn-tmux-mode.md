@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | in progress · next: A7 |
+| **Status** | in progress · next: R1 (Stack A landed) |
 | **Updated** | 2026-11-17 |
 | **Tracker** | — |
 | **Related** | [approved design](../superpowers/specs/2026-11-17-tmux-mode-design.md); tmux core design in `wmxscott/dotfiles`, `docs/superpowers/specs/2026-11-16-tmux-core-design.md` |
@@ -431,3 +431,4 @@ Ask of every PR:
 - 2026-11-17: phase A4 landed as #13. Plan amended with S20: squash-merged commits count as pushed, the branch is deleted only when nothing would be lost, the default branch is protected in every layout, and Herdr closes late.
 - 2026-11-17: phase A5 landed as #14. Skipped worktrees are listed before the question, and the summary only counts them.
 - 2026-11-17: phase A6 landed as #15. Plan amended with S21: client pinning inside popups, and `Ctrl-X` reusing the list it confirmed.
+- 2026-11-17: phase A7 landed as #16. Stack A is done, and v2.0.0 is tagged and released after merge.
