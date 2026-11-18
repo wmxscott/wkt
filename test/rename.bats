@@ -24,18 +24,28 @@ setup() {
     [ "$(git -C "$LAYOUT" worktree list --porcelain | grep -c "^worktree $LAYOUT/better$")" -eq 1 ]
 }
 
-@test "tells herdr about the new path, labelled with the new branch" {
-    run wkt rename -b better
+@test "re-points the worktree's Herdr workspace, labelled with the new branch" {
+    STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/main" "$LAYOUT/topic") run wkt rename -b better
     [ "$status" -eq 0 ]
-    [ "$(herdr_calls)" = "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/better --label better --focus" ]
+    [ "$(herdr_calls)" = $'workspace list\nworktree open --cwd '"$LAYOUT/.bare --path $LAYOUT/better --label better" ]
     contains "$output" "✓ topic → better  $LAYOUT/better  Herdr workspace updated"
     contains "$output" "run: cd $LAYOUT/better"
 }
 
 @test "-n sets the herdr label" {
-    run wkt rename -b better -n "Nicer name"
+    STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/topic") run wkt rename -b better -n "Nicer name"
     [ "$status" -eq 0 ]
-    [ "$(herdr_calls)" = "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/better --label Nicer name --focus" ]
+    contains "$(herdr_calls)" "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/better --label Nicer name"
+    lacks "$(herdr_calls)" "--focus"
+}
+
+@test "no workspace for the worktree: looks, but never creates one" {
+    STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/main") run --separate-stderr wkt rename -b better
+    [ "$status" -eq 0 ]
+    [ -d "$LAYOUT/better" ]
+    [ "$(herdr_calls)" = "workspace list" ]
+    lacks "$stderr" "warning"
+    lacks "$output" "Herdr workspace updated"
 }
 
 @test "renames the branch on origin when it was pushed" {
@@ -104,7 +114,7 @@ setup() {
     run wkt rename -b better
     [ "$status" -eq 0 ]
     [ -d "$HOME/.herdr/worktrees/acme/widget/better" ]
-    contains "$output" "  ~/.herdr/worktrees/acme/widget/better  "
+    contains "$output" "✓ topic → better  ~/.herdr/worktrees/acme/widget/better"
 }
 
 @test "refuses the main checkout" {
@@ -150,36 +160,45 @@ setup() {
     [ "$(git -C "$LAYOUT/topic" branch --show-current)" = topic ]
 }
 
-@test "outside Herdr: renames without calling herdr" {
+@test "outside Herdr: re-points the workspace all the same" {
     unset HERDR_TAB_ID
-    run --separate-stderr wkt rename -b better
+    STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/topic") run wkt rename -b better
     [ "$status" -eq 0 ]
-    [ -d "$LAYOUT/better" ]
-    lacks "$stderr" "warning"
-    [ -z "$(herdr_calls)" ]
-    lacks "$output" "Herdr workspace updated"
+    contains "$(herdr_calls)" "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/better --label better"
+    contains "$output" "Herdr workspace updated"
 }
 
-@test "--no-herdr: renames without calling herdr" {
-    run wkt rename --no-herdr -b better
+@test "--no-herdr is accepted and changes nothing" {
+    STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/topic") run wkt rename --no-herdr -b better
     [ "$status" -eq 0 ]
     [ -d "$LAYOUT/better" ]
-    [ -z "$(herdr_calls)" ]
-    lacks "$output" "Herdr workspace updated"
+    contains "$(herdr_calls)" "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/better --label better"
+    contains "$output" "Herdr workspace updated"
 }
 
-@test "without herdr: renames, warns, exits 0" {
+@test "without herdr: renames, says nothing about Herdr" {
     rm "$STUB_BIN/herdr"
     run --separate-stderr wkt rename -b better
     [ "$status" -eq 0 ]
     [ -d "$LAYOUT/better" ]
-    contains "$stderr" "herdr not found on PATH"
+    lacks "$stderr" "warning"
     lacks "$output" "Herdr workspace updated"
 }
 
-@test "when herdr fails: renames, warns, exits 0" {
-    STUB_HERDR_FAIL=1 run --separate-stderr wkt rename -b better
+@test "Herdr not answering the lookup: renames, says nothing about Herdr" {
+    STUB_HERDR_FAIL=1 STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/topic") run --separate-stderr wkt rename -b better
+    [ "$status" -eq 0 ]
+    [ -d "$LAYOUT/better" ]
+    [ "$(herdr_calls)" = "workspace list" ]
+    lacks "$stderr" "warning"
+    lacks "$output" "Herdr workspace updated"
+}
+
+@test "re-pointing fails: renames, warns with the command, exits 0" {
+    STUB_HERDR_FAIL=worktree STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/topic") run --separate-stderr wkt rename -b better
     [ "$status" -eq 0 ]
     [ -d "$LAYOUT/better" ]
     contains "$stderr" "Herdr didn't open the worktree"
+    contains "$stderr" "herdr worktree open --cwd $LAYOUT/.bare --path $LAYOUT/better --label better"
+    lacks "$output" "Herdr workspace updated"
 }

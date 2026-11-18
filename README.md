@@ -2,14 +2,14 @@
 
 [![CI](https://github.com/wmxscott/wkt/actions/workflows/ci.yml/badge.svg)](https://github.com/wmxscott/wkt/actions/workflows/ci.yml)
 
-Git worktrees in a predictable place, one command each. Inside [Herdr](https://herdr.dev), they open as Herdr workspaces and stay in sync with them when you rename a branch.
+Git worktrees in a predictable place, one command each. Ask, and they open as [Herdr](https://herdr.dev) workspaces, which stay in sync with them when you rename a branch.
 
 Give each piece of work its own git worktree and parallel tasks, or coding agents, can't trip over each other's checkouts. wkt makes that one command: it puts the worktree in a predictable place and starts the branch from a freshly fetched default branch. When the branch earns a better name, one more command renames the branch, its directory and the branch on origin together.
 
-Herdr runs coding agents in persistent terminal workspaces. When you run wkt inside Herdr, it also opens each new worktree as a Herdr workspace, and a rename moves the workspace with it. Pass `--no-herdr` to skip that for one command.
+Herdr runs coding agents in persistent terminal workspaces. Pass `--herdr` and wkt also opens the worktree as a Herdr workspace. A rename moves a worktree's workspace with it, whether or not you ask.
 
 ```console
-$ wkt new -b fix-login
+$ wkt new -b fix-login --herdr
 → updating main from origin
 → branching from origin/main
 ✓ fix-login  ~/.herdr/worktrees/acme/widget/fix-login  opened in Herdr
@@ -22,7 +22,7 @@ Herdr can create worktrees itself, and wkt uses Herdr's `worktree open` to show 
 - **Remote branches.** A branch that only exists on origin is checked out tracking it. Herdr creates a new branch of that name from `--base` or `HEAD` instead.
 - **Fresh starting point.** A new branch starts from the default branch, or `-s <source>`, after fetching it from origin, so it isn't based on a stale local copy.
 - **Reopening.** Asking again for a branch that already has a worktree, wherever it is, opens that worktree.
-- **Renaming.** Herdr has no rename for worktrees. `wkt rename` renames the branch locally and on origin, moves the directory and points the Herdr workspace at the new path.
+- **Renaming.** Herdr has no rename for worktrees. `wkt rename` renames the branch locally and on origin, moves the directory and points the worktree's Herdr workspace, if it has one, at the new path.
 - **`.bare` layouts.** `wkt setup` clones a repository into a layout where every branch is a sibling folder, `wkt adopt` converts a clone you already have, and `wkt new` keeps to it.
 
 ## Install
@@ -45,7 +45,7 @@ install wkt/bin/wkt ~/.local/bin/
 
 ### Optional dependencies
 
-Herdr is optional. wkt only talks to it when run inside Herdr, which it detects from `HERDR_TAB_ID` in a pane or `HERDR_ENV` in a popup, such as one a Herdr plugin opens. There, if `herdr` isn't on your `PATH` or can't reach the server, wkt still does the git work, prints a warning with the `herdr` command to run later, and exits successfully.
+Herdr is optional, and wkt never opens anything in it unless you pass `--herdr`. Then, if `herdr` isn't on your `PATH` or can't reach the server, wkt still does the git work, prints a warning with the `herdr` command to run later, and exits successfully. The picker and `wkt rename` also ask Herdr which worktrees have a workspace, and say nothing when it isn't there to answer.
 
 The [picker](#the-picker) needs a little more:
 
@@ -56,9 +56,9 @@ The [picker](#the-picker) needs a little more:
 ## Usage
 
 ```
-wkt
-wkt new -b <branch> [-s <source>] [-n <label>] [--no-herdr]
-wkt rename -b <new-branch> [-n <label>] [-y] [--no-herdr]
+wkt [--herdr]
+wkt new -b <branch> [-s <source>] [-n <label>] [--herdr]
+wkt rename -b <new-branch> [-n <label>] [-y]
 wkt setup <repo-url>
 wkt adopt
 wkt --help | --version
@@ -74,7 +74,7 @@ Each row shows a worktree's branch and folder. An icon at the end marks the work
 
 | Key | |
 |---|---|
-| `Enter` | Open the highlighted worktree |
+| `Enter` | Choose the highlighted worktree |
 | `Ctrl-N` | Make a new worktree, with what you typed as its branch name |
 | `Enter` with no matches | The same as `Ctrl-N` |
 | `Esc` | Quit |
@@ -83,11 +83,11 @@ A new worktree takes up to three steps:
 
 1. **Branch.** The name for the branch and its folder. It's checked before moving on.
 2. **Source.** The branch to start from. Skipped when the branch already exists locally or on origin.
-3. **Label.** Inside Herdr only: the workspace's label. Leave it blank to let Herdr pick one, or press `Ctrl-O` to not open the worktree in Herdr.
+3. **Label.** With `--herdr` only: the workspace's label. Leave it blank to let Herdr pick one, or press `Ctrl-O` to not open the worktree in Herdr.
 
 `Esc` at any step goes back to the list. After the last step, it runs [`wkt new`](#wkt-new) with your answers.
 
-Outside Herdr, the picker prints the chosen worktree's path and nothing else. Inside Herdr, it opens the worktree as a workspace and prints nothing, unless Herdr can't be reached; then it warns and prints the path.
+The picker prints the chosen worktree's path and nothing else. `wkt --herdr` opens it as a Herdr workspace instead and prints nothing, unless Herdr can't be reached; then it warns and prints the path.
 
 A program can't change its shell's folder, so to have plain `wkt` move you into the worktree you pick, add this function to `~/.zshrc` or `~/.bashrc`:
 
@@ -99,7 +99,7 @@ wkt() {
 }
 ```
 
-`wkt <command>` still runs the command as usual.
+`wkt --herdr` and `wkt <command>` still run as usual.
 
 The picker's colours are Catppuccin Latte in light mode and Macchiato in dark mode. It chooses once when it starts: `WKT_THEME` if it's `light` or `dark`, else theme-monitor's trigger file, else macOS's own setting.
 
@@ -113,14 +113,14 @@ Run it anywhere in a repository: the main checkout, any worktree, or the top of 
 4. `<branch>` exists on origin: create it locally, tracking origin's.
 5. Otherwise, fetch `<source>` from origin and create `<branch>` from it. The new branch doesn't track `<source>`, so the first push needs `git push -u origin HEAD`, or set `push.autoSetupRemote`.
 
-Inside Herdr, it then opens the worktree with `herdr worktree open` and focuses it.
+It then prints the worktree's path. With `--herdr`, it also opens the worktree with `herdr worktree open` and focuses it.
 
 | Option | |
 |---|---|
 | `-b <branch>` | Branch to create or open. Also the worktree's folder name. Required |
 | `-s <source>` | Branch to start a new branch from. Defaults to the repository's default branch: origin's `HEAD`, else `main` or `master` |
 | `-n <label>` | Label for the Herdr workspace. Without it, Herdr picks one |
-| `--no-herdr` | Don't open the worktree in Herdr, for when you want the worktree but not another workspace |
+| `--herdr` | Open the worktree as a Herdr workspace and focus it |
 
 ### `wkt rename`
 
@@ -128,7 +128,7 @@ Run it from inside a worktree to give its branch a new name. It:
 
 1. Renames the branch on origin, if it was pushed. When origin is on GitHub and [`gh`](https://cli.github.com) is installed, it uses GitHub's branch-rename API. Otherwise, or if that fails, it pushes the new name and deletes the old one.
 2. Renames the local branch and moves the worktree folder to match.
-3. Inside Herdr, points the Herdr workspace at the new folder, labelled with the new branch name. Run it from outside Herdr, or with `--no-herdr`, and an open workspace keeps the old path until you reopen it.
+3. If a Herdr workspace has the worktree open, points it at the new folder, labelled with the new branch name. It never opens a workspace that wasn't there, and it needs no flag for this.
 
 Your shell stays in the old folder, which no longer exists, so `cd` to the path it prints.
 
@@ -139,7 +139,6 @@ If the branch has an open pull request, it stops and asks first. GitHub closes a
 | `-b <new-branch>` | New branch name. Also the new folder name. Required |
 | `-n <label>` | Label for the Herdr workspace. Defaults to the new branch name |
 | `-y` | Rename even when an open pull request would be closed |
-| `--no-herdr` | Leave the Herdr workspace alone |
 
 It won't rename the main checkout of a normal clone, a detached `HEAD`, or onto a branch or folder that already exists.
 
@@ -210,8 +209,6 @@ wkt has no config file. It reads these environment variables:
 | Variable | Default | |
 |---|---|---|
 | `WKT_ROOT` | `~/.herdr/worktrees` | Where worktrees of normal clones go. Must be absolute; a leading `~` is expanded. |
-| `HERDR_TAB_ID` | *(set by Herdr)* | Its presence means wkt is running inside Herdr, so it opens worktrees there |
-| `HERDR_ENV` | *(set by Herdr)* | `1` also means wkt is running inside Herdr. Popups set it but not `HERDR_TAB_ID` |
 | `WKT_THEME` | `auto` | The picker's colours: `light`, `dark` or `auto`. `auto` follows theme-monitor's trigger file, else macOS's setting |
 | `XDG_DATA_HOME` | `~/.local/share` | Where the picker looks for theme-monitor's `theme-monitor/theme-change.trigger` |
 | `NO_COLOR` | *(unset)* | Set to anything to turn off coloured output. The picker keeps its icons. Output is plain whenever it isn't going to a terminal |
@@ -243,7 +240,7 @@ bats test
 zsh -n bin/wkt
 ```
 
-The tests use [bats](https://github.com/bats-core/bats-core). Each one runs in a temporary folder against a local bare repository standing in for origin, with a throwaway `HOME`, every `HERDR_*` variable removed except a dummy `HERDR_TAB_ID` (or `HERDR_ENV=1` for the popup tests), and stub `herdr`, `gh`, `fzf` and `defaults` commands first on `PATH`. They never touch a running Herdr, GitHub, your terminal or your own repositories. The stub `herdr` records its arguments, so the tests check exactly what wkt asks Herdr to do. The stub `fzf` records what it was given and plays back answers each test scripts, and fails loudly when a test didn't expect a call.
+The tests use [bats](https://github.com/bats-core/bats-core). Each one runs in a temporary folder against a local bare repository standing in for origin, with a throwaway `HOME`, every `HERDR_*` variable removed except a dummy `HERDR_TAB_ID`, so they also show wkt opens nothing in Herdr unasked, and stub `herdr`, `gh`, `fzf` and `defaults` commands first on `PATH`. They never touch a running Herdr, GitHub, your terminal or your own repositories. The stub `herdr` records its arguments, so the tests check exactly what wkt asks Herdr to do. The stub `fzf` records what it was given and plays back answers each test scripts, and fails loudly when a test didn't expect a call.
 
 `contrib/wkt.rb` is the Homebrew formula.
 

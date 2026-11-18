@@ -72,6 +72,41 @@ setup() { common_setup; }
     run wkt --frobnicate
     [ "$status" -eq 2 ]
     contains "$output" "Unknown option: --frobnicate"
+
+    run wkt --herdr --frobnicate
+    [ "$status" -eq 2 ]
+    contains "$output" "Unknown option: --frobnicate"
+
+    run wkt --herdr extra
+    [ "$status" -eq 2 ]
+    contains "$output" "Unexpected argument: extra"
+}
+
+@test "--tmux isn't supported yet" {
+    run wkt --tmux
+    [ "$status" -eq 2 ]
+    contains "$output" "--tmux isn't supported yet"
+    contains "$output" "Run 'wkt --help' for usage."
+
+    run wkt new -b topic --tmux
+    [ "$status" -eq 2 ]
+    contains "$output" "--tmux isn't supported yet"
+    contains "$output" "Run 'wkt new --help' for usage."
+}
+
+@test "help offers --herdr, not --no-herdr" {
+    local cmd
+    for cmd in "" new rename; do
+        run wkt ${cmd:+"$cmd"} --help
+        [ "$status" -eq 0 ]
+        lacks "$output" "--no-herdr"
+    done
+    contains "$(wkt --help)" "--herdr"
+    contains "$(wkt new --help)" "--herdr"
+    lacks "$(wkt rename --help)" "--herdr"
+    run wkt --herdr --help
+    [ "$status" -eq 0 ]
+    starts_with "${lines[0]}" "Usage: wkt"
 }
 
 @test "new: argument errors" {
@@ -104,6 +139,13 @@ setup() { common_setup; }
     run wkt rename -b a b
     [ "$status" -eq 2 ]
     contains "$output" "Unexpected argument: b"
+
+    run wkt rename -b a --herdr
+    [ "$status" -eq 2 ]
+    contains "$output" "rename doesn't take --herdr"
+
+    run wkt rename -b a --tmux
+    [ "$status" -eq 2 ]
 }
 
 @test "setup: argument errors" {

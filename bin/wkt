@@ -1,5 +1,5 @@
 #!/usr/bin/env zsh
-# wkt: git worktrees in a .bare layout, opened as Herdr workspaces inside Herdr.
+# wkt: git worktrees in a .bare layout, opened as Herdr workspaces on request.
 # https://github.com/wmxscott/wkt
 
 emulate -R zsh
@@ -44,19 +44,20 @@ usage() {
     cat <<EOF
 Usage: $PROG <command> [options]
 
-Git worktrees in a .bare layout. Inside Herdr, new and renamed worktrees
-open as Herdr workspaces.
+Git worktrees in a .bare layout. With --herdr, a new or picked worktree
+opens as a Herdr workspace, and rename keeps an open workspace in step.
 
 Commands:
-  (no command)                    Pick or create a worktree (needs fzf)
+  (no command) [--herdr]          Pick or create a worktree (needs fzf) and
+                                  print its path, or open it in Herdr
   setup <repo-url>                Clone <repo-url> into a .bare worktree layout
                                   in the current (empty) directory
   adopt                           Turn the current clone into a .bare worktree
                                   layout in place
-  new -b <branch> [-s <source>] [-n <label>] [--no-herdr]
-                                  Create or reopen the worktree for <branch>
-                                  and open it in Herdr
-  rename -b <new-branch> [-n <label>] [-y] [--no-herdr]
+  new -b <branch> [-s <source>] [-n <label>] [--herdr]
+                                  Create or reopen the worktree for <branch>,
+                                  and with --herdr open it in Herdr
+  rename -b <new-branch> [-n <label>] [-y]
                                   Rename the current worktree's branch,
                                   directory and Herdr workspace
 
@@ -94,36 +95,35 @@ EOF
 
 usage_new() {
     cat <<EOF
-Usage: $PROG new -b <branch> [-s <source>] [-n <label>] [--no-herdr]
+Usage: $PROG new -b <branch> [-s <source>] [-n <label>] [--herdr]
 
-Create the worktree for <branch>, or reuse it if it exists, and open it in
-Herdr when run inside Herdr. A new branch is created from <source> unless it
-already exists locally or on origin.
+Create the worktree for <branch>, or reuse it if it exists, and print its
+path. A new branch is created from <source> unless it already exists locally
+or on origin.
 
 Options:
   -b <branch>   Branch to create or open; also the worktree directory name
   -s <source>   Branch to start a new branch from (default: the repo's
                 default branch)
   -n <label>    Herdr workspace label (default: chosen by Herdr)
-  --no-herdr    Don't open the worktree in Herdr
+  --herdr       Open the worktree as a Herdr workspace and focus it
   -h, --help    Show this help
 EOF
 }
 
 usage_rename() {
     cat <<EOF
-Usage: $PROG rename -b <new-branch> [-n <label>] [-y] [--no-herdr]
+Usage: $PROG rename -b <new-branch> [-n <label>] [-y]
 
 Rename the current worktree's branch and directory, rename the branch on
-origin if it was pushed, and, inside Herdr, point the Herdr workspace at the
-new path. Run it from inside a linked worktree.
+origin if it was pushed, and point the worktree's Herdr workspace, if it has
+one, at the new path. Run it from inside a linked worktree.
 
 Options:
   -b <new-branch>  New branch name; also the new directory name
   -n <label>       Herdr workspace label (default: the new branch name)
   -y               Don't ask before renaming a remote branch that has an
                    open pull request
-  --no-herdr       Leave the Herdr workspace alone
   -h, --help       Show this help
 EOF
 }
@@ -137,20 +137,23 @@ wants_help() {
     return 1
 }
 
-# take_no_herdr <args...>: set NO_HERDR if --no-herdr is among the arguments
-# and leave the rest in ARGS.
-typeset -g NO_HERDR=0
+# take_open_flags <command> <args...>: set OPEN_IN to herdr or tmux from
+# --herdr or --tmux, drop --no-herdr, which callers still pass but which does
+# nothing now, and leave the rest in ARGS.
+typeset -g OPEN_IN=
 typeset -ga ARGS
-take_no_herdr() {
-    ARGS=()
-    local arg
+take_open_flags() {
+    local cmd=$1 arg
+    shift
+    OPEN_IN= ARGS=()
     for arg in "$@"; do
-        if [[ $arg == --no-herdr ]]; then
-            NO_HERDR=1
-        else
-            ARGS+=("$arg")
-        fi
+        case $arg in
+            --herdr | --tmux ) OPEN_IN=${arg#--} ;;
+            --no-herdr ) ;;
+            * ) ARGS+=("$arg") ;;
+        esac
     done
+    [[ $OPEN_IN != tmux ]] || usage_error "$cmd" "--tmux isn't supported yet."
 }
 
 # Print $1 relative to $2 (both resolved to absolute paths first).
@@ -244,23 +247,16 @@ worktree_root() {
     print -r -- "${root%/}"
 }
 
-# in_herdr: true when running inside Herdr. A popup, like the ones Herdr
-# plugins open, has no tab, so it sets HERDR_ENV but not HERDR_TAB_ID.
-in_herdr() {
-    [[ -n ${HERDR_TAB_ID-} || ${HERDR_ENV-} == 1 ]]
-}
-
-# herdr_open <repo-git-dir> <worktree-path> [<label>]
-# Open the worktree as a Herdr workspace, only when running inside Herdr and
-# not told --no-herdr. The git work is already done, so a missing or
-# unreachable Herdr only warns; the status says whether it opened.
+# herdr_open <repo-git-dir> <worktree-path> <label> [<herdr arg>...]
+# Open the worktree as a Herdr workspace, or point the one that has it at a
+# new path. The git work is already done, so a missing or unreachable Herdr
+# only warns; the status says whether it opened.
 herdr_open() {
-    (( ! NO_HERDR )) && in_herdr || return 1
-
-    local repo_dir=$1 wt_path=$2 label=${3-}
+    local repo_dir=$1 wt_path=$2 label=$3
+    shift 3
     local -a args=(worktree open --cwd "$repo_dir" --path "$wt_path")
     [[ -n "$label" ]] && args+=(--label "$label")
-    args+=(--focus)
+    args+=("$@")
 
     if ! command -v herdr >/dev/null 2>&1; then
         warn "herdr not found on PATH; skipped opening the worktree in Herdr."
@@ -274,6 +270,21 @@ herdr_open() {
         return 1
     fi
     return 0
+}
+
+# herdr_paths: fill HERDR_PATHS with the worktree paths open as Herdr
+# workspaces. Empty if Herdr isn't installed or doesn't answer.
+typeset -gA HERDR_PATHS
+herdr_paths() {
+    HERDR_PATHS=()
+    command -v herdr >/dev/null 2>&1 || return 0
+    local json found
+    json=$(herdr workspace list 2>/dev/null || true)
+    while [[ $json == *'"checkout_path":"'* ]]; do
+        json=${json#*'"checkout_path":"'}
+        found=${json%%'"'*}
+        [[ -z $found ]] || HERDR_PATHS[${found:A}]=1
+    done
 }
 
 cmd_setup() {
@@ -403,7 +414,7 @@ cmd_adopt() {
 
 cmd_new() {
     wants_help "$@" && { usage_new; exit 0; }
-    take_no_herdr "$@"
+    take_open_flags new "$@"
     set -- "${ARGS[@]}"
     local new_branch="" source_branch="" label="" opt
     local OPTIND=1 OPTARG
@@ -496,7 +507,7 @@ cmd_new() {
     fi
 
     local herdr_note="" opened=0
-    if herdr_open "$common_dir" "$target_path" "$label"; then
+    if [[ $OPEN_IN == herdr ]] && herdr_open "$common_dir" "$target_path" "$label" --focus; then
         herdr_note="  ${OUT_BLUE}opened in Herdr${OUT_RESET}"
         opened=1
     fi
@@ -514,7 +525,9 @@ cmd_new() {
 
 cmd_rename() {
     wants_help "$@" && { usage_rename; exit 0; }
-    take_no_herdr "$@"
+    take_open_flags rename "$@"
+    [[ -z $OPEN_IN ]] ||
+        usage_error rename "rename doesn't take --$OPEN_IN; it re-points a worktree's Herdr workspace on its own."
     set -- "${ARGS[@]}"
     local new_branch="" new_label="" auto_yes=0 opt
     local OPTIND=1 OPTARG
@@ -629,6 +642,10 @@ cmd_rename() {
         git branch --quiet --set-upstream-to="origin/$new_branch" "$new_branch" 2>/dev/null || true
     fi
 
+    local had_workspace=0
+    herdr_paths
+    [[ -z ${HERDR_PATHS[$old_path]-} ]] || had_workspace=1
+
     mkdir -p "${new_path:h}"
     git -C "$common_dir" worktree move "$old_path" "$new_path"
 
@@ -639,7 +656,7 @@ cmd_rename() {
     done
 
     local herdr_note=""
-    if herdr_open "$common_dir" "$new_path" "${new_label:-$new_branch}"; then
+    if (( had_workspace )) && herdr_open "$common_dir" "$new_path" "${new_label:-$new_branch}"; then
         herdr_note="  ${OUT_BLUE}Herdr workspace updated${OUT_RESET}"
     fi
 
@@ -794,21 +811,6 @@ ui_parse() {
     UI_QUERY=${lines[1]-} UI_KEY=${lines[2]-} UI_SEL=${lines[3]-}
 }
 
-# ui_herdr_paths: fill UI_HERDR with the worktree paths open as Herdr
-# workspaces, when inside Herdr. Empty if Herdr doesn't answer.
-typeset -gA UI_HERDR
-ui_herdr_paths() {
-    UI_HERDR=()
-    in_herdr && command -v herdr >/dev/null 2>&1 || return 0
-    local json found
-    json=$(herdr workspace list 2>/dev/null || true)
-    while [[ $json == *'"checkout_path":"'* ]]; do
-        json=${json#*'"checkout_path":"'}
-        found=${json%%'"'*}
-        [[ -z $found ]] || UI_HERDR[${found:A}]=1
-    done
-}
-
 # ui_rows: fill UI_ROWS with one fzf row per worktree, default branch first,
 # and UI_AT with the current worktree's row, or 0. A row is
 # head<TAB>branch<TAB>tail<TAB>path; fzf shows a tab as one cell.
@@ -891,7 +893,7 @@ ui_rows() {
             ui_paint red "$UI_ICO_MISSING"
         elif [[ ${e_flag[i]} == locked ]]; then
             ui_paint yellow "$UI_ICO_LOCKED"
-        elif [[ -n ${UI_HERDR[${wt:A}]-} ]]; then
+        elif [[ -n ${HERDR_PATHS[${wt:A}]-} ]]; then
             ui_paint blue "$UI_ICO_OPEN"
         else
             REPLY=" "
@@ -1043,13 +1045,12 @@ ui_new() {
         args+=(-s "${out##*$'\t'}")
     fi
 
-    if in_herdr && (( ! NO_HERDR )); then
+    if [[ $OPEN_IN == herdr ]]; then
         ui_ask 'Label: ' "" "$UI_ENTER accept · ^o don't open in Herdr · esc discards" "" \
             --expect ctrl-o || return 0
-        if [[ $UI_KEY == ctrl-o ]]; then
-            args+=(--no-herdr)
-        elif [[ -n $UI_QUERY ]]; then
-            args+=(-n "$UI_QUERY")
+        if [[ $UI_KEY != ctrl-o ]]; then
+            args+=(--herdr)
+            [[ -z $UI_QUERY ]] || args+=(-n "$UI_QUERY")
         fi
     fi
 
@@ -1058,6 +1059,12 @@ ui_new() {
 }
 
 cmd_ui() {
+    wants_help "$@" && { usage; exit 0; }
+    take_open_flags "" "$@"
+    if (( ${#ARGS} )); then
+        [[ ${ARGS[1]} == -* ]] && usage_error "" "Unknown option: ${ARGS[1]}"
+        usage_error "" "Unexpected argument: ${ARGS[1]}"
+    fi
     exec 3>&1 1>&2
     git rev-parse --git-dir >/dev/null 2>&1 || die "Not inside a Git repository."
     command -v fzf >/dev/null 2>&1 || die "The picker needs fzf: brew install fzf"
@@ -1070,7 +1077,7 @@ cmd_ui() {
 
     ui_theme
     export WKT_THEME=$UI_THEME
-    ui_herdr_paths
+    herdr_paths
     local header out st
     ui_header "$UI_ENTER open · ^n new · esc quit"
     header=$REPLY
@@ -1095,7 +1102,7 @@ cmd_ui() {
             return 0
         fi
         local wt=${UI_SEL##*$'\t'}
-        herdr_open "$(common_git_dir)" "$wt" || print -r -- "$wt" >&3
+        [[ $OPEN_IN == herdr ]] && herdr_open "$(common_git_dir)" "$wt" "" --focus || print -r -- "$wt" >&3
         return 0
     done
 }
@@ -1108,9 +1115,9 @@ case "${1-}" in
     -h | --help | help ) usage ;;
     -V | --version ) print -r -- "wkt $VERSION" ;;
     __preview ) shift; ui_theme; ui_preview "$@" ;;
-    "" )
+    "" | --herdr | --tmux | --no-herdr )
         if [[ -t 0 && -t 2 || -n ${WKT_ASSUME_TTY-} ]]; then
-            cmd_ui
+            cmd_ui "$@"
         else
             usage >&2
             exit 2
