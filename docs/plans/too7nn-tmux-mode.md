@@ -23,6 +23,7 @@ wkt opens worktrees as tmux sessions when asked with `--tmux`, keeps them in ste
   - `wkt rm`, run from inside it, removes the worktree and leaves them in another session.
 - [ ] `prefix W` opens the picker in a popup, and `Enter`, `Ctrl-N`, `Ctrl-D` and `Ctrl-X` all work from there.
 - [ ] Launchpad's wkt entry in Herdr still opens worktrees as workspaces.
+- [ ] wkt 2.1.0 rejects `--no-herdr` as an unknown option, and nothing the user runs still passes it (S18).
 - [ ] An agent following the updated ai-toolkit skills runs plain `wkt new`, and the user's tmux client doesn't move.
 
 ## Settled: do not re-derive
@@ -105,6 +106,10 @@ wkt opens worktrees as tmux sessions when asked with `--tmux`, keeps them in ste
   - `common_setup` unsets `TMUX` and `TMUX_PANE` and adds a stub `tmux` that logs its arguments and answers queries the test sets up.
   - The guard loop refuses to run if `tmux` doesn't resolve to the stub.
 - **S17 Where this plan lives.** It's in `docs/plans/` with a base36 name, as in herdr-projects. The approved design remains the record of the user's own words. This plan is the working artifact.
+- **S18 `--no-herdr` is removed in wkt 2.1.0 (user's decision, added 2026-11-17).** S2's "accepted and ignored" lasts only until no caller passes the flag.
+  - **Order:** ai-toolkit's skills drop it first (R4), and so does docket. Then wkt removes it, and it becomes an unknown option (exit 2).
+  - **Version:** 2.1.0 rather than 3.0.0, because the user asked for it within 2.x.
+  - **Before C2 lands,** the user's machines must have the updated ai-toolkit plugins. Otherwise an agent still following the old `landing-changes` skill would get a usage error.
 
 ## Command contracts
 
@@ -316,6 +321,42 @@ Each phase is a PR in a different repository, so nothing here touches this repo,
 
 **R4 note:** `--no-herdr` must stay in the skills until the user's machines have 2.0.0. R4 is gated on R1 for that reason.
 
+### Stack C: drop `--no-herdr`
+
+- **Base:** `main`
+- **Owns:** `bin/wkt`, `test/**`, `README.md`, `contrib/wkt.rb`
+- **Independent of:** —
+- **Depends on:** A (2.0.0 released), R (R4's skills no longer pass the flag)
+
+This stack runs after A and R, so it changes the same files as A without overlapping it in time. C1 and C3 are in other repositories.
+
+| Phase | Lands | Depends on |
+|---|---|---|
+| C1 | `wmxscott/docket`: `AGENTS.md` and `CLAUDE.md` say plain `wkt new -b <branch>` | R4 |
+| C2 | wkt: `--no-herdr` removed from every command, tests flipped to expect exit 2, release 2.1.0 | C1 |
+| C3 | `wmxscott/homebrew-tap`: `Formula/wkt.rb` at `v2.1.0` | C2 |
+
+- [ ] C1: docket stops passing `--no-herdr`
+- [ ] C2: wkt 2.1.0 drops `--no-herdr`
+- [ ] C3: tap formula 2.1.0
+
+**C1: docket stops passing `--no-herdr`**
+- **What changes:** the one line in each of docket's `AGENTS.md` and `CLAUDE.md`.
+- *Shippable when:* docket's own checks pass.
+
+**C2: wkt 2.1.0 drops `--no-herdr`**
+- **What changes:**
+  - The parser stops accepting `--no-herdr`, so it reports an unknown option, exit 2, on `new`, `rename`, `rm` and the picker.
+  - The tests that pinned the no-op now pin the error.
+  - `VERSION=2.1.0`, `test/cli.bats` and `contrib/wkt.rb` follow.
+  - Once it merges, tag `v2.1.0` and create the GitHub release `wkt 2.1.0`, with a note naming the removal.
+- **Before dispatching,** confirm on this machine that the installed ai-toolkit `landing-changes` and `wkt` skills no longer mention `--no-herdr`. A search of `~/.claude/plugins/cache/ai-toolkit/` is enough. If they still do, ask the user to update the plugins first.
+- *Shippable when:* CI is green, `wkt new -b x --no-herdr` exits 2, and the release exists.
+
+**C3: tap formula 2.1.0**
+- **What changes:** the usual URL and checksum bump.
+- *Shippable when:* the tap's CI passes and `brew upgrade wkt` installs 2.1.0.
+
 ## Forest from the trees
 
 ### Challenge
@@ -346,7 +387,7 @@ Ask of every PR:
 - **Cleanup across repos:** deferred to project 3's switcher.
 - **A name step for tmux in the picker:** rejected. It's an extra keystroke on the user's usual path, and `-n` covers renaming.
 - **`prefix W c` as a tmux key table:** rejected by the user in favour of `Ctrl-X` in the picker.
-- **docket's `--no-herdr` mentions:** deferred. They're harmless under S2.
+- ~~**docket's `--no-herdr` mentions:** deferred. They're harmless under S2.~~ Now phase C1, since S18 removes the flag.
 - **Removing Herdr support:** out of scope until project 5, and only on the user's say-so.
 
 ## Blocked on
@@ -356,3 +397,4 @@ Ask of every PR:
 ## Log
 
 - 2026-11-17: plan written from the approved design.
+- 2026-11-17: plan amended. Added S18 and Stack C, to remove `--no-herdr` in 2.1.0 once the skills and docket stop passing it, as the user asked.
