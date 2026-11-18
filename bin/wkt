@@ -387,28 +387,28 @@ tmux_find() {
     REPLY=${TMUX_NAMES[i]}
 }
 
-# tmux_free <name> <worktree-path>: true unless a session other than the
-# worktree's own has the name.
+# tmux_free <name> [<session>]: true unless a session other than <session> has
+# the name.
 tmux_free() {
     local i=${TMUX_NAMES[(Ie)$1]}
-    (( ! i )) || [[ ${TMUX_TAGS[i]} == $2 || ${TMUX_DIRS[i]} == ($2|$2/*) ]]
+    (( ! i )) || [[ $1 == "${2-}" ]]
 }
 
-# tmux_name <worktree-path> <branch> [<name>]: the session name for the
-# worktree, in REPLY: <name>, else <repo>/<branch>, else <org>/<repo>/<branch>
-# if another session has that, then with -2, -3 and so on until it's free.
-# tmux reads . and : in a target as separators, so they become -. Needs
-# tmux_sessions first.
+# tmux_name <session> <branch> [<name>]: the name for the worktree's session,
+# or with "" for a new one, in REPLY: <name>, else <repo>/<branch>, else
+# <org>/<repo>/<branch> if another session has that, then with -2, -3 and so
+# on until it's free. tmux reads . and : in a target as separators, so they
+# become -. Needs tmux_sessions first.
 tmux_name() {
-    local wt=$1 name=${3-} n=1
+    local session=$1 name=${3-} n=1
     if [[ -z $name ]]; then
         org_repo "$(common_git_dir)"
         name=$REPO_NAME/$2
-        tmux_free "${name//[.:]/-}" "$wt" || name=$REPO_ORG/$name
+        tmux_free "${name//[.:]/-}" "$session" || name=$REPO_ORG/$name
     fi
     name=${name//[.:]/-}
     REPLY=$name
-    while ! tmux_free "$REPLY" "$wt"; do
+    while ! tmux_free "$REPLY" "$session"; do
         REPLY=$name-$(( ++n ))
     done
 }
@@ -419,22 +419,34 @@ tmux_name() {
 typeset -g TMUX_CLIENT=
 
 # tmux_open <worktree-path> <branch> [<name>]: switch to the worktree's tmux
-# session, making and tagging it first if there's none. Outside tmux, it
-# leaves the session to attach to in TMUX_ATTACH instead. What it did goes in
-# REPLY. The git work is already done, so a missing or failing tmux only
-# warns; the status says whether it opened.
+# session, making and tagging it first if there's none, or if there is, giving
+# it the name tmux_name says and tagging it again. Outside tmux, it leaves the
+# session to attach to in TMUX_ATTACH instead. What it did goes in REPLY. The
+# git work is already done, so a missing or failing tmux only warns; the
+# status says whether it opened.
 typeset -g TMUX_ATTACH=
 tmux_open() {
-    local wt=${1:A} name did err
+    local wt=${1:A} name did renamed="" err
     if ! command -v tmux >/dev/null 2>&1; then
         warn "tmux not found on PATH; skipped opening the worktree in tmux."
         return 1
     fi
     tmux_sessions
     if tmux_find "$wt"; then
-        name=$REPLY did="switched to $REPLY"
+        name=$REPLY
+        tmux_name "$name" "$2" "${3-}"
+        if [[ $REPLY != "$name" ]]; then
+            if err=$(tmux rename-session -t "=$name" "$REPLY" 2>&1 >/dev/null); then
+                renamed=" (renamed from $name)" name=$REPLY
+            else
+                warn "tmux didn't rename session $name to $REPLY${err:+: ${err%%$'\n'*}}"
+            fi
+        fi
+        err=$(tmux set-option -t "=$name:" @wkt-worktree "$wt" 2>&1 >/dev/null) ||
+            warn "tmux didn't tag session $name${err:+: ${err%%$'\n'*}}"
+        did="switched to $name"
     else
-        tmux_name "$wt" "$2" "${3-}"
+        tmux_name "" "$2" "${3-}"
         name=$REPLY did="opened in tmux"
         # set-option takes a pane, which an exact =<name> only finds with a :.
         if ! err=$(tmux new-session -d -s "$name" -c "$wt" 2>&1 >/dev/null &&
@@ -450,7 +462,7 @@ tmux_open() {
         warn "tmux didn't switch to $name${err:+: ${err%%$'\n'*}}"
         return 1
     fi
-    REPLY=$did
+    REPLY=$did$renamed
 }
 
 # tmux_rename <session> <name> <worktree-path>: rename the session and tag it
@@ -904,7 +916,7 @@ cmd_rename() {
     tmux_sessions
     if tmux_find "$old_path"; then
         session=$REPLY
-        tmux_name "$old_path" "$new_branch" "$new_name"
+        tmux_name "$session" "$new_branch" "$new_name"
         session_name=$REPLY
     fi
 

@@ -710,7 +710,7 @@ picked() { printf 'x\t%s\t\t%s' "${1##*/}" "$1"; }
     contains "$stderr" "→ attach with: tmux attach -t widget/topic"
 }
 
-@test "--tmux: enter on a worktree with a session switches to it" {
+@test "--tmux: enter on a worktree with a misnamed session renames and re-tags it, then switches to it" {
     make_layout
     cd "$LAYOUT"
     wkt new -b topic >/dev/null
@@ -719,7 +719,70 @@ picked() { printf 'x\t%s\t\t%s' "${1##*/}" "$1"; }
         run --separate-stderr wkt --tmux
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    [ "$(tmux_calls)" = "$(printf '%s\n' "$WHO" "$LIST" "$LIST" "switch-client -c$CLIENT -t =restored")" ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$WHO" "$LIST" "$LIST" \
+        "rename-session -t =restored widget/topic" \
+        "set-option -t =widget/topic: @wkt-worktree $LAYOUT/topic" \
+        "switch-client -c$CLIENT -t =widget/topic")" ]
+}
+
+@test "--tmux outside tmux: enter on a misnamed session renames it and says how to attach" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    fzf_reply 1 0 "" "" "$(picked "$LAYOUT/topic")"
+    STUB_TMUX_SESSIONS="$(sessions 0 "$LAYOUT/topic" "$LAYOUT/topic")" run --separate-stderr wkt --tmux
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" "$LIST" \
+        "rename-session -t =0 widget/topic" \
+        "set-option -t =widget/topic: @wkt-worktree $LAYOUT/topic")" ]
+    contains "$stderr" "→ attach with: tmux attach -t widget/topic"
+}
+
+@test "--tmux: enter on a correctly named session re-tags it without renaming" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    fzf_reply 1 0 "" "" "$(picked "$LAYOUT/topic")"
+    STUB_TMUX_SESSIONS="$(sessions widget/topic "" "$LAYOUT/topic")" STUB_TMUX_CLIENT=$CLIENT TMUX=stub \
+        run --separate-stderr wkt --tmux
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$WHO" "$LIST" "$LIST" \
+        "set-option -t =widget/topic: @wkt-worktree $LAYOUT/topic" \
+        "switch-client -c$CLIENT -t =widget/topic")" ]
+}
+
+@test "--tmux: enter renames to <org>/<repo>/<branch> when another session has the name" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    fzf_reply 1 0 "" "" "$(picked "$LAYOUT/topic")"
+    STUB_TMUX_SESSIONS="$(sessions \
+        widget/topic "$TMP/other" "$TMP/other" \
+        0 "$LAYOUT/topic" "$LAYOUT/topic")" STUB_TMUX_CLIENT=$CLIENT TMUX=stub \
+        run --separate-stderr wkt --tmux
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$WHO" "$LIST" "$LIST" \
+        "rename-session -t =0 acme/widget/topic" \
+        "set-option -t =acme/widget/topic: @wkt-worktree $LAYOUT/topic" \
+        "switch-client -c$CLIENT -t =acme/widget/topic")" ]
+}
+
+@test "--tmux: enter when renaming fails warns and still switches, by the old name" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    fzf_reply 1 0 "" "" "$(picked "$LAYOUT/topic")"
+    STUB_TMUX_SESSIONS="$(sessions 0 "" "$LAYOUT/topic")" STUB_TMUX_FAIL=rename-session \
+        STUB_TMUX_CLIENT=$CLIENT TMUX=stub run --separate-stderr wkt --tmux
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$WHO" "$LIST" "$LIST" \
+        "rename-session -t =0 widget/topic" \
+        "set-option -t =0: @wkt-worktree $LAYOUT/topic" \
+        "switch-client -c$CLIENT -t =0")" ]
+    contains "$stderr" "tmux didn't rename session 0 to widget/topic"
 }
 
 @test "--tmux: a detached worktree's session is named after its folder" {
@@ -731,6 +794,14 @@ picked() { printf 'x\t%s\t\t%s' "${1##*/}" "$1"; }
     run --separate-stderr wkt --tmux
     [ "$status" -eq 0 ]
     contains "$(tmux_calls)" "new-session -d -s widget/loose -c $LAYOUT/loose"
+
+    : >"$STUB_TMUX_LOG"
+    rm -f "${STUB_FZF_DIR:?}"/*
+    fzf_reply 1 0 "" "" "$(picked "$LAYOUT/loose")"
+    STUB_TMUX_SESSIONS="$(sessions 0 "$LAYOUT/loose" "$LAYOUT/loose")" run --separate-stderr wkt --tmux
+    [ "$status" -eq 0 ]
+    contains "$(tmux_calls)" "rename-session -t =0 widget/loose"
+    contains "$stderr" "→ attach with: tmux attach -t widget/loose"
 }
 
 @test "--tmux: tmux failing warns and prints the path" {
