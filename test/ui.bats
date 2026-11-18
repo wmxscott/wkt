@@ -145,7 +145,7 @@ row_path() { fzf_input 1 | sed -n "${1}p" | cut -f 4; }
     contains "$args" $'--nth\n2'
     contains "$args" $'--delimiter\n\t'
     contains "$args" $'--tabstop\n1'
-    contains "$args" $'--expect\nctrl-n'
+    contains "$args" $'--expect\nctrl-n,ctrl-d,ctrl-x'
     contains "$args" "--print-query"
     contains "$args" $'--ansi\n--layout=reverse\n--height=100%\n--border=none\n--margin=0\n--padding=0\n--no-info'
     contains "$args" $'--prompt\n> '
@@ -273,7 +273,7 @@ trigger() {
 @test "header: hints row" {
     make_layout
     run picker_input
-    contains "$(fzf_args 1)" $'\xe2\x86\xb5 open \xc2\xb7 ^n new \xc2\xb7 esc quit'
+    contains "$(fzf_args 1)" $'\xe2\x86\xb5 open \xc2\xb7 ^n new \xc2\xb7 ^d remove \xc2\xb7 ^x remove merged \xc2\xb7 esc quit'
 }
 
 @test "long paths are cut from the left" {
@@ -670,4 +670,356 @@ MACCHIATO_YELLOW="38;2;238;212;159"
     [ "$status" -ne 0 ]
     [ -z "$output" ]
     lacks "$stderr" "✓"
+}
+
+# --- tmux ------------------------------------------------------------------
+
+LIST=$'list-sessions -F #{session_name}\t#{@wkt-worktree}\t#{session_path}\t#{session_last_attached}'
+WHO=$'display-message -p #{client_name}\t#{session_name}'
+CLIENT=/dev/ttys001
+CURRENT="display-message -t$CLIENT -p #{session_name}"
+
+# picked <path>: a row as fzf prints it when picked; only the path counts.
+picked() { printf 'x\t%s\t\t%s' "${1##*/}" "$1"; }
+
+@test "--tmux inside tmux: enter opens the worktree's session, switching the picker's client" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    fzf_reply 1 0 "" "" "$(picked "$LAYOUT/topic")"
+    STUB_TMUX_CLIENT=$CLIENT TMUX=stub run --separate-stderr wkt --tmux
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$WHO" "$LIST" "$LIST" \
+        "new-session -d -s widget/topic -c $LAYOUT/topic" \
+        "set-option -t =widget/topic: @wkt-worktree $LAYOUT/topic" \
+        "switch-client -c$CLIENT -t =widget/topic")" ]
+}
+
+@test "--tmux outside tmux: enter makes the session and says how to attach" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    fzf_reply 1 0 "" "" "$(picked "$LAYOUT/topic")"
+    run --separate-stderr wkt --tmux
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" "$LIST" \
+        "new-session -d -s widget/topic -c $LAYOUT/topic" \
+        "set-option -t =widget/topic: @wkt-worktree $LAYOUT/topic")" ]
+    contains "$stderr" "→ attach with: tmux attach -t widget/topic"
+}
+
+@test "--tmux: enter on a worktree with a session switches to it" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    fzf_reply 1 0 "" "" "$(picked "$LAYOUT/topic")"
+    STUB_TMUX_SESSIONS="$(sessions restored "" "$LAYOUT/topic")" STUB_TMUX_CLIENT=$CLIENT TMUX=stub \
+        run --separate-stderr wkt --tmux
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$WHO" "$LIST" "$LIST" "switch-client -c$CLIENT -t =restored")" ]
+}
+
+@test "--tmux: a detached worktree's session is named after its folder" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b loose >/dev/null
+    git -C "$LAYOUT/loose" checkout --quiet --detach
+    fzf_reply 1 0 "" "" "$(picked "$LAYOUT/loose")"
+    run --separate-stderr wkt --tmux
+    [ "$status" -eq 0 ]
+    contains "$(tmux_calls)" "new-session -d -s widget/loose -c $LAYOUT/loose"
+}
+
+@test "--tmux: tmux failing warns and prints the path" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    fzf_reply 1 0 "" "" "$(picked "$LAYOUT/topic")"
+    STUB_TMUX_FAIL=new-session TMUX=stub run --separate-stderr wkt --tmux
+    [ "$status" -eq 0 ]
+    [ "$output" = "$LAYOUT/topic" ]
+    contains "$stderr" "tmux didn't open the worktree"
+}
+
+@test "--tmux: ctrl-n makes the worktree and opens its session, with no label step" {
+    make_layout
+    cd "$LAYOUT"
+    fzf_reply 1 0 "" ctrl-n ""
+    fzf_reply 2 1 topic
+    fzf_reply 3 0 main
+    STUB_TMUX_CLIENT=$CLIENT TMUX=stub run --separate-stderr wkt --tmux
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$(fzf_calls)" -eq 3 ]
+    [ -d "$LAYOUT/topic" ]
+    contains "$(tmux_calls)" "new-session -d -s widget/topic -c $LAYOUT/topic"
+    [ "$(tmux_calls | tail -n 1)" = "switch-client -c$CLIENT -t =widget/topic" ]
+    contains "$stderr" "opened in tmux"
+}
+
+@test "plain wkt inside tmux: enter prints the path and opens nothing" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    fzf_reply 1 0 "" "" "$(picked "$LAYOUT/topic")"
+    STUB_TMUX_CLIENT=$CLIENT TMUX=stub run --separate-stderr wkt
+    [ "$status" -eq 0 ]
+    [ "$output" = "$LAYOUT/topic" ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$WHO" "$LIST")" ]
+}
+
+@test "a worktree with a tmux session gets the circle, found as rm finds it" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    wkt new -b other >/dev/null
+    STUB_TMUX_SESSIONS="$(sessions mine "$LAYOUT/topic" "$HOME" restored "" "$LAYOUT/other/src")" \
+        run picker_input
+    contains "$(row_for "$LAYOUT/topic")" "$ICO_OPEN"
+    contains "$(row_for "$LAYOUT/other")" "$ICO_OPEN"
+    lacks "$(row_for "$LAYOUT/main")" "$ICO_OPEN"
+}
+
+@test "tmux not answering or missing: no tmux status, and no warning" {
+    make_layout
+    STUB_TMUX_FAIL=1 STUB_TMUX_SESSIONS="$(sessions mine "$LAYOUT/main" "$LAYOUT/main")" run picker_input
+    lacks "$(row_for "$LAYOUT/main")" "$ICO_OPEN"
+
+    cd "$LAYOUT"
+    rm -f "${STUB_FZF_DIR:?}"/*
+    fzf_reply 1 130
+    STUB_TMUX_FAIL=1 TMUX=stub run --separate-stderr wkt
+    [ "$status" -eq 130 ]
+    [ -z "$stderr" ]
+
+    rm "$STUB_BIN/tmux"
+    rm -f "${STUB_FZF_DIR:?}"/*
+    fzf_reply 1 130
+    TMUX=stub run --separate-stderr wkt
+    [ "$status" -eq 130 ]
+    [ -z "$stderr" ]
+}
+
+# --- removing --------------------------------------------------------------
+
+has_branch() { git -C "$LAYOUT" show-ref --verify --quiet "refs/heads/$1"; }
+no_branch() { ! git -C "$LAYOUT" show-ref --verify --quiet "refs/heads/$1"; }
+
+@test "ctrl-d: asks, naming the branch; y removes it as rm -b does, and the list comes back with the outcome" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    fzf_reply 1 0 "" ctrl-d "$(picked "$LAYOUT/topic")"
+    fzf_reply 2 1 y
+    fzf_reply 3 130
+    run --separate-stderr wkt
+    [ "$status" -eq 130 ]
+    [ -z "$output" ]
+    [ ! -e "$LAYOUT/topic" ]
+    no_branch topic
+    contains "$(fzf_args 2)" $'--prompt\nRemove topic? [y/N] '
+    contains "$(fzf_args 2)" "Remove worktree"
+    contains "$(fzf_args 2)" "--disabled"
+    [ "$(fzf_input 3 | cut -f 4)" = "$LAYOUT/main" ]
+    contains "$(fzf_args 3)" "--expect"
+    contains "$(fzf_args 3)" "✓ removed topic  $LAYOUT/topic  branch deleted"
+}
+
+@test "ctrl-d: anything but y, or esc, keeps it" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    fzf_reply 1 0 "" ctrl-d "$(picked "$LAYOUT/topic")"
+    fzf_reply 2 1 n
+    fzf_reply 3 0 "" ctrl-d "$(picked "$LAYOUT/topic")"
+    fzf_reply 4 130
+    fzf_reply 5 130
+    run wkt
+    [ "$status" -eq 130 ]
+    [ "$(fzf_calls)" -eq 5 ]
+    [ -d "$LAYOUT/topic" ]
+    has_branch topic
+    lacks "$(fzf_args 3)" "removed"
+    lacks "$(fzf_args 5)" "removed"
+}
+
+@test "ctrl-d: a refusal comes back as a notice, and the picker carries on" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    wkt new -b ahead >/dev/null
+    echo draft >"$LAYOUT/topic/notes.txt"
+    git -C "$LAYOUT/ahead" commit --quiet --allow-empty -m work
+    fzf_reply 1 0 "" ctrl-d "$(picked "$LAYOUT/topic")"
+    fzf_reply 2 1 y
+    fzf_reply 3 0 "" ctrl-d "$(picked "$LAYOUT/main")"
+    fzf_reply 4 1 y
+    fzf_reply 5 0 "" ctrl-d "$(picked "$LAYOUT/ahead")"
+    fzf_reply 6 1 y
+    fzf_reply 7 130
+    run --separate-stderr wkt
+    [ "$status" -eq 130 ]
+    [ -z "$stderr" ]
+    contains "$(fzf_args 3)" "'topic' has uncommitted changes or untracked files."
+    contains "$(fzf_args 5)" "Refusing to remove the default branch's worktree."
+    contains "$(fzf_args 7)" "'ahead' has commits that were never pushed."
+    [ -f "$LAYOUT/topic/notes.txt" ]
+    [ -d "$LAYOUT/main" ]
+    [ -d "$LAYOUT/ahead" ]
+}
+
+@test "ctrl-d: a detached worktree goes by its folder, and its branch stays" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b loose >/dev/null
+    git -C "$LAYOUT/loose" checkout --quiet --detach
+    fzf_reply 1 0 "" ctrl-d "$(picked "$LAYOUT/loose")"
+    fzf_reply 2 1 y
+    fzf_reply 3 130
+    run wkt
+    [ "$status" -eq 130 ]
+    contains "$(fzf_args 2)" $'--prompt\nRemove loose? [y/N] '
+    [ ! -e "$LAYOUT/loose" ]
+    has_branch loose
+    contains "$(fzf_args 3)" "✓ removed loose"
+}
+
+@test "ctrl-d on the worktree you're in: the list comes back without it, and still works" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    cd "$LAYOUT/topic"
+    fzf_reply 1 0 "" ctrl-d "$(picked "$LAYOUT/topic")"
+    fzf_reply 2 1 y
+    fzf_reply 3 0 "" "" "$(picked "$LAYOUT/main")"
+    run --separate-stderr wkt
+    [ "$status" -eq 0 ]
+    [ "$output" = "$LAYOUT/main" ]
+    [ ! -e "$LAYOUT/topic" ]
+    [ "$(fzf_input 3 | cut -f 4)" = "$LAYOUT/main" ]
+    [ -z "$stderr" ]
+}
+
+@test "ctrl-d on your own tmux session: switches the picker's client away, kills the session last, and exits" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    fzf_reply 1 0 "" ctrl-d "$(picked "$LAYOUT/topic")"
+    fzf_reply 2 1 y
+    STUB_TMUX_SESSIONS="$(sessions_attached \
+        widget/main "$LAYOUT/main" "$LAYOUT/main" 100 \
+        widget/topic "$LAYOUT/topic" "$LAYOUT/topic" 300)" \
+        STUB_TMUX_CLIENT=$CLIENT STUB_TMUX_CURRENT=widget/topic TMUX=stub run --separate-stderr wkt
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$(fzf_calls)" -eq 2 ]
+    [ ! -e "$LAYOUT/topic" ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$WHO" "$LIST" "$LIST" "$CURRENT" \
+        "switch-client -c$CLIENT -t =widget/main" "kill-session -t =widget/topic" "$LIST")" ]
+}
+
+@test "ctrl-d on another worktree's session: kills it and stays" {
+    make_layout
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    fzf_reply 1 0 "" ctrl-d "$(picked "$LAYOUT/topic")"
+    fzf_reply 2 1 y
+    fzf_reply 3 130
+    STUB_TMUX_SESSIONS="$(sessions_attached \
+        widget/main "$LAYOUT/main" "$LAYOUT/main" 100 \
+        widget/topic "$LAYOUT/topic" "$LAYOUT/topic" 300)" \
+        STUB_TMUX_CLIENT=$CLIENT STUB_TMUX_CURRENT=widget/main TMUX=stub run --separate-stderr wkt
+    [ "$status" -eq 130 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$WHO" "$LIST" "$LIST" "$CURRENT" \
+        "kill-session -t =widget/topic" "$LIST")" ]
+    contains "$(fzf_args 3)" "tmux session widget/topic closed"
+}
+
+# merged_setup: worktrees fresh, never used, so merged; dirty, merged but
+# with an untracked file; and open, with a pushed commit that isn't merged.
+merged_setup() {
+    make_layout
+    cd "$LAYOUT" || return 1
+    local b
+    for b in fresh dirty open; do
+        wkt new -b "$b" >/dev/null
+    done
+    echo draft >"$LAYOUT/dirty/notes.txt"
+    git -C "$LAYOUT/open" commit --quiet --allow-empty -m open
+    git -C "$LAYOUT/open" push --quiet -u origin open
+}
+
+plain() { sed $'s/\e\\[[0-9;]*m//g'; }
+
+@test "ctrl-x: lists what goes and what's skipped, asks, and y removes them as rm --merged -y does" {
+    merged_setup
+    fzf_reply 1 0 "" ctrl-x "$(picked "$LAYOUT/main")"
+    fzf_reply 2 0 y fresh
+    fzf_reply 3 130
+    run --separate-stderr wkt
+    [ "$status" -eq 130 ]
+    contains "$(fzf_args 2)" $'--prompt\nRemove 1 merged worktree? [y/N] '
+    contains "$(fzf_args 2)" "Remove merged worktrees"
+    [ "$(fzf_input 2 | plain)" = "$(printf '%s\n' "fresh  $LAYOUT/fresh" \
+        "dirty  $LAYOUT/dirty  (skipped: uncommitted changes or untracked files)")" ]
+    [ ! -e "$LAYOUT/fresh" ]
+    no_branch fresh
+    [ -d "$LAYOUT/dirty" ]
+    [ -d "$LAYOUT/open" ]
+    contains "$(fzf_args 3)" "✓ removed 1, skipped 1"
+}
+
+@test "ctrl-x: anything but y keeps them" {
+    merged_setup
+    fzf_reply 1 0 "" ctrl-x ""
+    fzf_reply 2 0 n fresh
+    fzf_reply 3 130
+    run wkt
+    [ "$status" -eq 130 ]
+    [ -d "$LAYOUT/fresh" ]
+    has_branch fresh
+    lacks "$(fzf_args 3)" "removed"
+}
+
+@test "ctrl-x with nothing merged: says so without asking" {
+    merged_setup
+    wkt rm -b fresh >/dev/null
+    fzf_reply 1 0 "" ctrl-x ""
+    fzf_reply 2 130
+    run wkt
+    [ "$status" -eq 130 ]
+    [ "$(fzf_calls)" -eq 2 ]
+    contains "$(fzf_args 2)" "--expect"
+    contains "$(fzf_args 2)" "No merged worktrees to remove; 1 skipped with uncommitted changes or untracked files"
+}
+
+@test "ctrl-x: one that git can't remove comes back as an error notice" {
+    merged_setup
+    git worktree lock "$LAYOUT/fresh"
+    fzf_reply 1 0 "" ctrl-x ""
+    fzf_reply 2 0 y fresh
+    fzf_reply 3 130
+    run --separate-stderr wkt
+    [ "$status" -eq 130 ]
+    [ -d "$LAYOUT/fresh" ]
+    contains "$(fzf_args 3)" "removed 0, failed 1, skipped 1"
+}
+
+@test "ctrl-x removing your own tmux session: switches the picker's client away, kills it last, and exits" {
+    merged_setup
+    fzf_reply 1 0 "" ctrl-x ""
+    fzf_reply 2 0 y fresh
+    STUB_TMUX_SESSIONS="$(sessions_attached \
+        widget/main "$LAYOUT/main" "$LAYOUT/main" 100 \
+        widget/fresh "$LAYOUT/fresh" "$LAYOUT/fresh" 300)" \
+        STUB_TMUX_CLIENT=$CLIENT STUB_TMUX_CURRENT=widget/fresh TMUX=stub run --separate-stderr wkt
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$(fzf_calls)" -eq 2 ]
+    [ ! -e "$LAYOUT/fresh" ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$WHO" "$LIST" "$LIST" "$CURRENT" \
+        "switch-client -c$CLIENT -t =widget/main" "kill-session -t =widget/fresh" "$LIST")" ]
 }

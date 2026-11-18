@@ -59,7 +59,7 @@ The [picker](#the-picker) needs a little more:
 ## Usage
 
 ```
-wkt [--herdr]
+wkt [--tmux | --herdr]
 wkt new -b <branch> [-s <source>] [-n <name>] [--tmux | --herdr]
 wkt rename -b <new-branch> [-n <name>] [-y]
 wkt rm [-b <branch>] [-f]
@@ -73,26 +73,32 @@ Every command also takes `--help`.
 
 ### The picker
 
-Run `wkt` on its own, anywhere in a repository, to pick one of its worktrees or make a new one. It needs [fzf](#optional-dependencies).
+Run `wkt` on its own, anywhere in a repository, to pick one of its worktrees, make a new one, or remove them. It needs [fzf](#optional-dependencies).
 
-Each row shows a worktree's branch and folder. An icon at the end marks the worktree you're in, one that's open in Herdr, one whose folder is gone, or one that's locked. The pane on the right shows the highlighted worktree's upstream, changed files and recent commits. Typing searches branch names.
+Each row shows a worktree's branch and folder. An icon at the end marks the worktree you're in, one that has a [tmux session](#finding-a-worktrees-session) or is open in Herdr, one whose folder is gone, or one that's locked. The pane on the right shows the highlighted worktree's upstream, changed files and recent commits. Typing searches branch names.
 
 | Key | |
 |---|---|
 | `Enter` | Choose the highlighted worktree |
 | `Ctrl-N` | Make a new worktree, with what you typed as its branch name |
 | `Enter` with no matches | The same as `Ctrl-N` |
+| `Ctrl-D` | Remove the highlighted worktree, as `wkt rm -b <branch>` does, after asking |
+| `Ctrl-X` | Remove every merged worktree, as `wkt rm --merged` does, after showing which and asking |
 | `Esc` | Quit |
 
 A new worktree takes up to three steps:
 
 1. **Branch.** The name for the branch and its folder. It's checked before moving on.
 2. **Source.** The branch to start from. Skipped when the branch already exists locally or on origin.
-3. **Label.** With `--herdr` only: the workspace's label. Leave it blank to let Herdr pick one, or press `Ctrl-O` to not open the worktree in Herdr.
+3. **Label.** With `--herdr` only: the workspace's label. Leave it blank to let Herdr pick one, or press `Ctrl-O` to not open the worktree in Herdr. `--tmux` adds no step.
 
 `Esc` at any step goes back to the list. After the last step, it runs [`wkt new`](#wkt-new) with your answers.
 
-The picker prints the chosen worktree's path and nothing else. `wkt --herdr` opens it as a Herdr workspace instead and prints nothing, unless Herdr can't be reached; then it warns and prints the path.
+The picker prints the chosen worktree's path and nothing else. `wkt --tmux` opens its [tmux session](#tmux) instead, as `wkt new --tmux` does: inside tmux, it switches you to it, and outside, it says how to attach. `wkt --herdr` opens it as a Herdr workspace. Either way it prints nothing, unless the worktree couldn't be opened; then it warns and prints the path. A new worktree opens the same way.
+
+`Ctrl-D` and `Ctrl-X` ask `y/N` on an input line before removing anything. `Ctrl-D` names the branch. `Ctrl-X` lists what it would remove and what it would skip, or says there's nothing to remove and doesn't ask. Both follow [`wkt rm`](#wkt-rm)'s rules, without `-f`: a worktree it refuses, such as one with uncommitted changes, stays, and why shows above the list. Otherwise the list comes back without what went, and what `wkt rm` said shows above it. If what you removed had the tmux session you're in, wkt switches you to another session, closes that one, and quits.
+
+In tmux, the picker works well in a popup, like `display-popup -E -d '#{pane_current_path}' 'wkt --tmux'` in a key binding. A popup has no pane of its own, so tmux would act on whichever client was used last; wkt notes the popup's client when it starts, and switches that one.
 
 A program can't change its shell's folder, so to have plain `wkt` move you into the worktree you pick, add this function to `~/.zshrc` or `~/.bashrc`:
 
@@ -104,7 +110,7 @@ wkt() {
 }
 ```
 
-`wkt --herdr` and `wkt <command>` still run as usual.
+`wkt --tmux`, `wkt --herdr` and `wkt <command>` still run as usual.
 
 The picker's colours are Catppuccin Latte in light mode and Macchiato in dark mode. It chooses once when it starts: `WKT_THEME` if it's `light` or `dark`, else theme-monitor's trigger file, else macOS's own setting.
 
@@ -260,7 +266,7 @@ $WKT_ROOT/<org>/<repo>/<branch>
 
 ## tmux
 
-`wkt new --tmux` gives the worktree its own tmux session. If the worktree already has one, wkt uses it. Otherwise it makes one, detached, starting in the worktree's folder, and tags it with the worktree's path. If no tmux server is running, making the session starts one.
+`wkt new --tmux`, and the [picker](#the-picker)'s `wkt --tmux`, give the worktree its own tmux session. If the worktree already has one, wkt uses it. Otherwise it makes one, detached, starting in the worktree's folder, and tags it with the worktree's path. If no tmux server is running, making the session starts one.
 
 - **Inside tmux**, when `$TMUX` is set, wkt switches your client to the session.
 - **Outside tmux**, it switches nothing and prints how to attach:
