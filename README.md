@@ -47,7 +47,7 @@ install wkt/bin/wkt ~/.local/bin/
 
 Herdr is optional, and wkt never opens anything in it unless you pass `--herdr`. Then, if `herdr` isn't on your `PATH` or can't reach the server, wkt still does the git work, prints a warning with the `herdr` command to run later, and exits successfully. The picker and `wkt rename` also ask Herdr which worktrees have a workspace, and say nothing when it isn't there to answer.
 
-tmux is optional too, and wkt only talks to it when you pass `--tmux`. If `tmux` isn't on your `PATH`, or a tmux command fails, wkt still does the git work, warns, and exits successfully.
+tmux is optional too, and wkt only opens a session when you pass `--tmux`. Then, if `tmux` isn't on your `PATH`, or a tmux command fails, wkt still does the git work, warns, and exits successfully. `wkt rename` also asks tmux which session has the worktree, and says nothing when there's no tmux to answer.
 
 The [picker](#the-picker) needs a little more:
 
@@ -60,7 +60,7 @@ The [picker](#the-picker) needs a little more:
 ```
 wkt [--herdr]
 wkt new -b <branch> [-s <source>] [-n <name>] [--tmux | --herdr]
-wkt rename -b <new-branch> [-n <label>] [-y]
+wkt rename -b <new-branch> [-n <name>] [-y]
 wkt setup <repo-url>
 wkt adopt
 wkt --help | --version
@@ -131,16 +131,19 @@ Run it from inside a worktree to give its branch a new name. It:
 
 1. Renames the branch on origin, if it was pushed. When origin is on GitHub and [`gh`](https://cli.github.com) is installed, it uses GitHub's branch-rename API. Otherwise, or if that fails, it pushes the new name and deletes the old one.
 2. Renames the local branch and moves the worktree folder to match.
-3. If a Herdr workspace has the worktree open, points it at the new folder, labelled with the new branch name. It never opens a workspace that wasn't there, and it needs no flag for this.
+3. If a Herdr workspace has the worktree open, points it at the new folder, labelled with the new branch name.
+4. If the worktree has a [tmux session](#finding-a-worktrees-session), renames it to `<repo>/<new-branch>`, following the same [naming rules](#session-names) as `wkt new`, and tags it with the new folder. Its starting folder, `session_path`, stays the old one, since tmux only changes that when a client attaches; the tag is what ties the session to the worktree.
+
+It never opens a workspace or session that wasn't there, and it needs no flag for either.
 
 Your shell stays in the old folder, which no longer exists, so `cd` to the path it prints.
 
-If the branch has an open pull request, it stops and asks first. GitHub closes an open PR when its branch is renamed through git or the API; only the rename button in GitHub's web UI keeps it open. To keep the PR, rename the branch on GitHub, then run `wkt rename` to bring the local branch, folder and Herdr workspace in line. Without a terminal to ask on, it stops unless you pass `-y`.
+If the branch has an open pull request, it stops and asks first. GitHub closes an open PR when its branch is renamed through git or the API; only the rename button in GitHub's web UI keeps it open. To keep the PR, rename the branch on GitHub, then run `wkt rename` to bring the local branch, folder, Herdr workspace and tmux session in line. Without a terminal to ask on, it stops unless you pass `-y`.
 
 | Option | |
 |---|---|
 | `-b <new-branch>` | New branch name. Also the new folder name. Required |
-| `-n <label>` | Label for the Herdr workspace. Defaults to the new branch name |
+| `-n <name>` | The Herdr workspace's label, instead of the new branch name, and the tmux session's name, instead of `<repo>/<new-branch>` |
 | `-y` | Rename even when an open pull request would be closed |
 
 It won't rename the main checkout of a normal clone, a detached `HEAD`, or onto a branch or folder that already exists.
@@ -224,7 +227,7 @@ $ wkt new -b fix-login --tmux
 
 A session is named `<repo>/<branch>`, like `widget/fix-login`, so tmux's status bar says which repository you're in. `<repo>` is the name from origin's URL that normal clones' [paths](#where-worktrees-go) use, and `.bare` layouts use it too. Without an origin, it's the repository's folder: the clone, or the folder that holds `.bare`. tmux reads `.` and `:` in a target as separators, so they become `-`: branch `v1.2` gives `widget/v1-2`.
 
-If a session that isn't this worktree's already has the name, wkt uses `<org>/<repo>/<branch>`, like `acme/widget/fix-login`. If that's taken too, it adds `-2`, `-3` and so on. `-n <name>` chooses the name yourself, with the same `-2` rule. It only names a new session; one that already exists keeps its name.
+If a session that isn't this worktree's already has the name, wkt uses `<org>/<repo>/<branch>`, like `acme/widget/fix-login`. If that's taken too, it adds `-2`, `-3` and so on. `-n <name>` chooses the name yourself, with the same `-2` rule. `wkt new` only names a new session; one that already exists keeps its name until [`wkt rename`](#wkt-rename) renames it.
 
 ### Finding a worktree's session
 

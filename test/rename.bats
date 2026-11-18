@@ -2,6 +2,8 @@
 
 load test_helper
 
+LIST=$'list-sessions -F #{session_name}\t#{@wkt-worktree}\t#{session_path}'
+
 setup() {
     common_setup
     make_origin
@@ -201,4 +203,133 @@ setup() {
     contains "$stderr" "Herdr didn't open the worktree"
     contains "$stderr" "herdr worktree open --cwd $LAYOUT/.bare --path $LAYOUT/better --label better"
     lacks "$output" "Herdr workspace updated"
+}
+
+# --- tmux ------------------------------------------------------------------
+
+@test "renames and re-tags the worktree's tmux session, without switching to it" {
+    STUB_TMUX_SESSIONS="$(sessions \
+        widget/main "$LAYOUT/main" "$LAYOUT/main" \
+        widget/topic "$LAYOUT/topic" "$LAYOUT/topic")"
+    export STUB_TMUX_SESSIONS
+    TMUX=stub run --separate-stderr wkt rename -b better
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "rename-session -t =widget/topic widget/better" \
+        "set-option -t =widget/better: @wkt-worktree $LAYOUT/better")" ]
+    lacks "$stderr" "warning"
+    contains "$output" "✓ topic → better  $LAYOUT/better  tmux session renamed to widget/better"
+}
+
+@test "a restored session, untagged, is found by its folder and tagged" {
+    ln -s "$LAYOUT" "$TMP/link"
+    STUB_TMUX_SESSIONS="$(sessions \
+        widget/topic-long "" "$LAYOUT/topic-long" \
+        restored "" "$TMP/link/topic/src")" run wkt rename -b better
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "rename-session -t =restored widget/better" \
+        "set-option -t =widget/better: @wkt-worktree $LAYOUT/better")" ]
+}
+
+@test "-n names both the Herdr workspace and the tmux session" {
+    STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/topic") \
+        STUB_TMUX_SESSIONS="$(sessions widget/topic "$LAYOUT/topic" "$LAYOUT/topic")" \
+        run wkt rename -b better -n "Login page.v2"
+    [ "$status" -eq 0 ]
+    contains "$(herdr_calls)" "--label Login page.v2"
+    contains "$(tmux_calls)" "rename-session -t =widget/topic Login page-v2"
+    contains "$(tmux_calls)" "set-option -t =Login page-v2: @wkt-worktree $LAYOUT/better"
+    contains "$output" "Herdr workspace updated  tmux session renamed to Login page-v2"
+}
+
+@test "a name another session has falls back to <org>/<repo>/<branch>, then -2" {
+    STUB_TMUX_SESSIONS="$(sessions \
+        widget/topic "$LAYOUT/topic" "$LAYOUT/topic" \
+        widget/better "$TMP/other" "$TMP/other" \
+        acme/widget/better "" "$HOME")" run wkt rename -b better
+    [ "$status" -eq 0 ]
+    contains "$(tmux_calls)" "rename-session -t =widget/topic acme/widget/better-2"
+    contains "$output" "tmux session renamed to acme/widget/better-2"
+}
+
+@test "the session's own name isn't a collision" {
+    STUB_TMUX_SESSIONS="$(sessions widget/topic "$LAYOUT/topic" "$LAYOUT/topic")" \
+        run wkt rename -b better -n widget/topic
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "rename-session -t =widget/topic widget/topic" \
+        "set-option -t =widget/topic: @wkt-worktree $LAYOUT/better")" ]
+
+    cd "$LAYOUT/main"
+    wkt new -b v1.2 >/dev/null 2>&1
+    cd "$LAYOUT/v1.2"
+    : >"$STUB_TMUX_LOG"
+    STUB_TMUX_SESSIONS="$(sessions widget/v1-2 "" "$LAYOUT/v1.2")" run wkt rename -b v1-2
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "rename-session -t =widget/v1-2 widget/v1-2" \
+        "set-option -t =widget/v1-2: @wkt-worktree $LAYOUT/v1-2")" ]
+}
+
+@test "no session for the worktree: looks, and nothing more" {
+    STUB_TMUX_SESSIONS="$(sessions \
+        widget/main "$LAYOUT/main" "$LAYOUT/main" \
+        widget/topic-long "" "$LAYOUT/topic-long")" run --separate-stderr wkt rename -b better
+    [ "$status" -eq 0 ]
+    [ -d "$LAYOUT/better" ]
+    [ "$(tmux_calls)" = "$LIST" ]
+    lacks "$stderr" "warning"
+    lacks "$output" "tmux session"
+}
+
+@test "without tmux on PATH: renames, says nothing about tmux" {
+    rm "$STUB_BIN/tmux"
+    run --separate-stderr wkt rename -b better
+    [ "$status" -eq 0 ]
+    [ -d "$LAYOUT/better" ]
+    lacks "$stderr" "warning"
+    lacks "$output" "tmux session"
+}
+
+@test "tmux not answering the lookup: renames, says nothing about tmux" {
+    STUB_TMUX_FAIL=1 STUB_TMUX_SESSIONS="$(sessions widget/topic "$LAYOUT/topic" "$LAYOUT/topic")" \
+        run --separate-stderr wkt rename -b better
+    [ "$status" -eq 0 ]
+    [ -d "$LAYOUT/better" ]
+    [ "$(tmux_calls)" = "$LIST" ]
+    lacks "$stderr" "warning"
+    lacks "$output" "tmux session"
+}
+
+@test "a Herdr workspace and a tmux session: one rename updates both" {
+    STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/topic") \
+        STUB_TMUX_SESSIONS="$(sessions widget/topic "$LAYOUT/topic" "$LAYOUT/topic")" \
+        run wkt rename -b better
+    [ "$status" -eq 0 ]
+    [ "$(herdr_calls)" = $'workspace list\nworktree open --cwd '"$LAYOUT/.bare --path $LAYOUT/better --label better" ]
+    contains "$(tmux_calls)" "rename-session -t =widget/topic widget/better"
+    contains "$(tmux_calls)" "set-option -t =widget/better: @wkt-worktree $LAYOUT/better"
+    contains "$output" "✓ topic → better  $LAYOUT/better  Herdr workspace updated  tmux session renamed to widget/better"
+}
+
+@test "renaming the session fails: renames, warns, exits 0" {
+    STUB_TMUX_FAIL=rename-session STUB_TMUX_SESSIONS="$(sessions widget/topic "$LAYOUT/topic" "$LAYOUT/topic")" \
+        run --separate-stderr wkt rename -b better
+    [ "$status" -eq 0 ]
+    [ -d "$LAYOUT/better" ]
+    contains "$stderr" "tmux didn't update session widget/topic: stub tmux: rename-session failed"
+    lacks "$(tmux_calls)" "set-option"
+    lacks "$output" "tmux session"
+    contains "$output" "✓ topic → better"
+}
+
+@test "tagging the session fails: renames, warns, exits 0" {
+    STUB_TMUX_FAIL=set-option STUB_TMUX_SESSIONS="$(sessions widget/topic "$LAYOUT/topic" "$LAYOUT/topic")" \
+        run --separate-stderr wkt rename -b better
+    [ "$status" -eq 0 ]
+    [ -d "$LAYOUT/better" ]
+    contains "$stderr" "tmux didn't update session widget/topic: stub tmux: set-option failed"
+    lacks "$output" "tmux session"
+    contains "$output" "✓ topic → better"
 }

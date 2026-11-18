@@ -45,8 +45,8 @@ usage() {
 Usage: $PROG <command> [options]
 
 Git worktrees in a .bare layout. With --herdr, a new or picked worktree
-opens as a Herdr workspace, and rename keeps an open workspace in step. With
---tmux, new opens it as a tmux session.
+opens as a Herdr workspace; with --tmux, new opens it as a tmux session.
+rename keeps an open workspace or session in step.
 
 Commands:
   (no command) [--herdr]          Pick or create a worktree (needs fzf) and
@@ -58,9 +58,10 @@ Commands:
   new -b <branch> [-s <source>] [-n <name>] [--tmux | --herdr]
                                   Create or reopen the worktree for <branch>,
                                   and with --tmux or --herdr open it there
-  rename -b <new-branch> [-n <label>] [-y]
+  rename -b <new-branch> [-n <name>] [-y]
                                   Rename the current worktree's branch,
-                                  directory and Herdr workspace
+                                  directory, Herdr workspace and tmux
+                                  session
 
 Options:
   -h, --help                      Show this help, or '$PROG <command> --help'
@@ -117,15 +118,17 @@ EOF
 
 usage_rename() {
     cat <<EOF
-Usage: $PROG rename -b <new-branch> [-n <label>] [-y]
+Usage: $PROG rename -b <new-branch> [-n <name>] [-y]
 
 Rename the current worktree's branch and directory, rename the branch on
-origin if it was pushed, and point the worktree's Herdr workspace, if it has
-one, at the new path. Run it from inside a linked worktree.
+origin if it was pushed, point the worktree's Herdr workspace, if it has
+one, at the new path, and rename its tmux session, if it has one. Run it
+from inside a linked worktree.
 
 Options:
   -b <new-branch>  New branch name; also the new directory name
-  -n <label>       Herdr workspace label (default: the new branch name)
+  -n <name>        Herdr workspace label (default: the new branch name)
+                   and tmux session name (default: <repo>/<new-branch>)
   -y               Don't ask before renaming a remote branch that has an
                    open pull request
   -h, --help       Show this help
@@ -319,6 +322,7 @@ herdr_paths() {
 typeset -ga TMUX_NAMES TMUX_TAGS TMUX_DIRS
 tmux_sessions() {
     TMUX_NAMES=() TMUX_TAGS=() TMUX_DIRS=()
+    command -v tmux >/dev/null 2>&1 || return 0
     local line
     local -a row
     for line in ${(f)"$(tmux list-sessions -F $'#{session_name}\t#{@wkt-worktree}\t#{session_path}' 2>/dev/null || true)"}; do
@@ -400,6 +404,18 @@ tmux_open() {
         return 1
     fi
     REPLY=$did
+}
+
+# tmux_rename <session> <name> <worktree-path>: rename the session and tag it
+# with the worktree's new path. The git work is already done, so a failing
+# tmux only warns; the status says whether it was updated.
+tmux_rename() {
+    local err
+    if ! err=$(tmux rename-session -t "=$1" "$2" 2>&1 >/dev/null &&
+        tmux set-option -t "=$2:" @wkt-worktree "$3" 2>&1 >/dev/null); then
+        warn "tmux didn't update session $1${err:+: ${err%%$'\n'*}}"
+        return 1
+    fi
 }
 
 cmd_setup() {
@@ -629,14 +645,14 @@ cmd_rename() {
     wants_help "$@" && { usage_rename; exit 0; }
     take_open_flags rename "$@"
     [[ -z $OPEN_IN ]] ||
-        usage_error rename "rename doesn't take --$OPEN_IN; it re-points a worktree's Herdr workspace on its own."
+        usage_error rename "rename doesn't take --$OPEN_IN; it updates a worktree's Herdr workspace and tmux session on its own."
     set -- "${ARGS[@]}"
-    local new_branch="" new_label="" auto_yes=0 opt
+    local new_branch="" new_name="" auto_yes=0 opt
     local OPTIND=1 OPTARG
     while getopts ":b:n:yh" opt; do
         case $opt in
             b ) new_branch=$OPTARG ;;
-            n ) new_label=$OPTARG ;;
+            n ) new_name=$OPTARG ;;
             y ) auto_yes=1 ;;
             h ) usage_rename; exit 0 ;;
             : ) usage_error rename "Option -$OPTARG needs a value." ;;
@@ -707,7 +723,8 @@ cmd_rename() {
             print -ru2 -- "  Renaming the remote branch will close that PR: GitHub doesn't carry an open"
             print -ru2 -- "  PR across a branch rename done with git or gh, so you'd need a new PR."
             print -ru2 -- "  To keep the PR, rename the branch in GitHub's web UI instead, then run"
-            print -ru2 -- "  '$PROG rename' here to bring the local branch, directory and Herdr workspace in line."
+            print -ru2 -- "  '$PROG rename' here to bring the local branch, directory, Herdr workspace and"
+            print -ru2 -- "  tmux session in line."
             print -ru2 -- "  Pass -y to rename anyway and close the PR."
             [[ -t 0 ]] || die "No terminal to confirm; pass -y to proceed. Nothing was changed."
             printf "  Continue anyway? [y/N] " >&2
@@ -744,9 +761,15 @@ cmd_rename() {
         git branch --quiet --set-upstream-to="origin/$new_branch" "$new_branch" 2>/dev/null || true
     fi
 
-    local had_workspace=0
+    local had_workspace=0 session="" session_name=""
     herdr_paths
     [[ -z ${HERDR_PATHS[$old_path]-} ]] || had_workspace=1
+    tmux_sessions
+    if tmux_find "$old_path"; then
+        session=$REPLY
+        tmux_name "$old_path" "$new_branch" "$new_name"
+        session_name=$REPLY
+    fi
 
     mkdir -p "${new_path:h}"
     git -C "$common_dir" worktree move "$old_path" "$new_path"
@@ -757,12 +780,15 @@ cmd_rename() {
         dir=${dir:h}
     done
 
-    local herdr_note=""
-    if (( had_workspace )) && herdr_open "$common_dir" "$new_path" "${new_label:-$new_branch}"; then
-        herdr_note="  ${OUT_BLUE}Herdr workspace updated${OUT_RESET}"
+    local notes=""
+    if (( had_workspace )) && herdr_open "$common_dir" "$new_path" "${new_name:-$new_branch}"; then
+        notes+="  ${OUT_BLUE}Herdr workspace updated${OUT_RESET}"
+    fi
+    if [[ -n $session ]] && tmux_rename "$session" "$session_name" "$new_path"; then
+        notes+="  ${OUT_BLUE}tmux session renamed to ${session_name}${OUT_RESET}"
     fi
 
-    print -r -- "${OUT_GREEN}✓${OUT_RESET} ${old_branch} → ${new_branch}  $(tildify "$new_path")${herdr_note}"
+    print -r -- "${OUT_GREEN}✓${OUT_RESET} ${old_branch} → ${new_branch}  $(tildify "$new_path")${notes}"
     print -r -- "${OUT_YELLOW}→${OUT_RESET} your shell is still in the old directory; run: cd ${(q-)new_path}"
 }
 
