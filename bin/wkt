@@ -6,7 +6,7 @@
 emulate -R zsh
 setopt err_exit pipe_fail
 
-VERSION=2.2.0
+VERSION=2.3.0
 PROG=${0:t}
 SELF=${0:A}
 
@@ -1244,7 +1244,7 @@ ui_theme() {
     typeset -g UI_ICO_BRANCH=$'\uf418'     # nf-oct-git_branch
     typeset -g UI_ICO_HOME=$'\uf46d'       # nf-oct-home
     typeset -g UI_ICO_COMMIT=$'\uf417'     # nf-oct-git_commit
-    typeset -g UI_ICO_CURRENT=$'\uf111'    # nf-fa-circle
+    typeset -g UI_ICO_CURRENT=$'\uf192'    # nf-fa-circle_dot
     typeset -g UI_ICO_OPEN=$'\uf4aa'       # nf-oct-circle
     typeset -g UI_ICO_MISSING=$'\U000f0338' # nf-md-link_off
     typeset -g UI_ICO_LOCKED=$'\uf456'     # nf-oct-lock
@@ -1270,20 +1270,21 @@ ui_paint() {
     fi
 }
 
-# ui_header <hints> [<title>] [<notice>]: fzf's three header rows, in REPLY.
-# The notice comes painted.
+# ui_header <hints> [<title>] [<notice>]: fzf's header rows, in REPLY: a blank
+# row, a row per line of hints, the first after the title, and the notice's
+# row. The notice comes painted.
 ui_header() {
-    local hints=$1 title=${2-} notice=${3-} line
-    if [[ -n $title ]]; then
-        ui_paint overlay0 dim " · $hints"
+    local title=${2-} notice=${3-} line rows=" "
+    for line in "${(@f)1}"; do
+        ui_paint overlay0 dim "${title:+ · }$line"
         line=$REPLY
-        ui_paint text bold "$title"
-        line=$REPLY$line
-    else
-        ui_paint overlay0 dim "$hints"
-        line=$REPLY
-    fi
-    REPLY=" "$'\n'"$line"$'\n'"${notice:- }"
+        if [[ -n $title ]]; then
+            ui_paint text bold "$title"
+            line=$REPLY$line title=""
+        fi
+        rows+=$'\n'$line
+    done
+    REPLY=$rows$'\n'"${notice:- }"
 }
 
 # ui_clip <cells> <text> [left]: the text cut to fit, an ellipsis marking the
@@ -1307,28 +1308,42 @@ ui_clip() {
 }
 
 # ui_width: the cells a list row may take, in REPLY: the terminal less the
-# preview's 40% and fzf's pointer, marker and scrollbar columns.
+# preview's 60% and fzf's pointer, marker and scrollbar columns.
 ui_width() {
     local size cols
     size=$({ stty size </dev/tty } 2>/dev/null || true)
     cols=${${(z)size}[2]-}
     [[ $cols == <-> ]] || cols=${COLUMNS-}
     [[ $cols == <-> ]] && (( cols > 0 )) || cols=80
-    REPLY=$(( cols * 60 / 100 - 3 ))
+    REPLY=$(( cols * 40 / 100 - 3 ))
     (( REPLY >= 20 )) || REPLY=20
 }
 
 # ui_fzf <prompt> <header> [<fzf args>...]: fzf with the picker's shared look.
+# Its bindings and preview run in sh, whatever $SHELL is.
 ui_fzf() {
     local prompt=$1 header=$2
     shift 2
     fzf --ansi --layout=reverse --height=100% --border=none --margin=0 --padding=0 --no-info \
-        --prompt "$prompt" --header "$header" "$@" || return
+        --with-shell 'sh -c' --prompt "$prompt" --header "$header" "$@" || return
 }
 
-# UI_LIST_KEYS: fzf args for a list: j and k move and other letters type
-# nothing, until / shows the input line to search.
-typeset -ga UI_LIST_KEYS=(--no-input --bind 'j:down,k:up,/:show-input+unbind(j,k,/)')
+# ui_list <hints> <search hints> [<title>] [<notice>]: fzf args for a list in
+# UI_LIST, and its header in REPLY. j and k move, q closes and other letters
+# type nothing, until / shows the input line to search; then Esc clears the
+# search and goes back. The notice shows until you search.
+typeset -ga UI_LIST
+ui_list() {
+    local hints=$1 title=${3-} search back
+    ui_header "$2" "$title"
+    search=$REPLY
+    ui_header "$hints" "$title"
+    back="clear-query+search()+hide-input+rebind(j,k,/,q)+change-header:$REPLY"
+    UI_LIST=(--no-input --bind 'j:down,k:up,q:abort'
+        --bind "/:show-input+unbind(j,k,/,q)+change-header:$search"
+        --bind "esc:transform:[ \"\$FZF_INPUT_STATE\" = enabled ] && printf %s ${(qq)back} || echo abort")
+    ui_header "$hints" "$title" "${4-}"
+}
 
 # ui_parse <fzf output>: split what fzf printed with --print-query and
 # --expect into UI_QUERY, UI_KEY and UI_SEL.
@@ -1437,7 +1452,7 @@ ui_rows() {
         (( fill >= 0 )) || fill=0
         ui_paint text "$name"
         label=$REPLY
-        ui_paint overlay0 dim "$path_text"
+        ui_paint subtext0 "$path_text"
 
         UI_ROWS+=("$icon "$'\t'"$label"$'\t'"${(l:pad:)sp}$REPLY${(l:fill:)sp}$status_icon"$'\t'"$wt")
     done
@@ -1564,9 +1579,10 @@ ui_new() {
         ! git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
         ui_sources
         local out st=0
-        ui_header "j/k move · / search · $UI_ENTER use as source · esc discards" "New worktree"
+        ui_list "j/k move · / search · $UI_ENTER use as source · q/esc discards" \
+            "↑/↓ move · $UI_ENTER use as source · esc back" "New worktree"
         out=$(print -rl -- "${UI_SOURCES[@]}" |
-            ui_fzf 'Source: ' "$REPLY" "${UI_LIST_KEYS[@]}" --delimiter $'\t' --with-nth 1..2 --nth 2 \
+            ui_fzf 'Source: ' "$REPLY" "${UI_LIST[@]}" --delimiter $'\t' --with-nth 1..2 --nth 2 \
                 --tabstop 1 --bind 'enter:accept-non-empty') || st=$?
         (( st != 130 )) || return 0
         (( st == 0 )) || die "fzf exited with status $st."
@@ -1685,6 +1701,8 @@ cmd_ui() {
     ui_theme
     export WKT_THEME=$UI_THEME
     local common_dir session="" header out st wt branch
+    # A second row of hints, so that they fit beside the preview.
+    local actions="^n new · ^d remove · ^x remove merged"
     common_dir=$(common_git_dir)
     if [[ -n ${TMUX-} ]]; then
         IFS=$'\t' read -r TMUX_CLIENT session \
@@ -1700,11 +1718,12 @@ cmd_ui() {
         fi
         [[ -d $PWD ]] || cd "$common_dir"
         ui_rows
-        ui_header "j/k move · / search · $UI_ENTER open · ^n new · ^d remove · ^x remove merged · esc quit" "" "$UI_NOTICE"
+        ui_list "j/k move · / search · $UI_ENTER open · q/esc close"$'\n'"$actions" \
+            "↑/↓ move · $UI_ENTER open · esc back"$'\n'"$actions" "" "$UI_NOTICE"
         header=$REPLY UI_NOTICE=
-        local -a args=("${UI_LIST_KEYS[@]}" --delimiter $'\t' --with-nth 1..3 --nth 2 --tabstop 1
+        local -a args=("${UI_LIST[@]}" --delimiter $'\t' --with-nth 1..3 --nth 2 --tabstop 1
             --expect ctrl-n,ctrl-d,ctrl-x --print-query
-            --preview "${(q)SELF} __preview {4}" --preview-window 'right,40%,border-left')
+            --preview "${(q)SELF} __preview {4}" --preview-window 'right,60%,border-left')
         (( UI_AT <= 1 )) || args+=(--bind "load:pos($UI_AT)")
 
         st=0
