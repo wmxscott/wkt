@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | in progress · next: A6 |
+| **Status** | in progress · next: A7 |
 | **Updated** | 2026-11-17 |
 | **Tracker** | — |
 | **Related** | [approved design](../superpowers/specs/2026-11-17-tmux-mode-design.md); tmux core design in `wmxscott/dotfiles`, `docs/superpowers/specs/2026-11-16-tmux-core-design.md` |
@@ -131,6 +131,12 @@ wkt opens worktrees as tmux sessions when asked with `--tmux`, keeps them in ste
   4. **Order:** the Herdr workspace now closes after removal (see the `wkt rm` contract). Closing it first could kill wkt partway when it runs inside that workspace.
   5. **A failed leave:** if switching away from the session fails, the session is kept and the kill command is printed, so a client is never dropped out of tmux.
   6. **Rejected:** keeping S7 as written, which would have made squash-merged worktrees need `-f`.
+
+- **S21 Popups need the client pinned (found in A6, tmux 3.8, throwaway server with two clients).**
+  - Inside `display-popup`, `$TMUX` is set and `$TMUX_PANE` isn't. So plain `switch-client` and `display-message -p` act on the most recently active client, which may not be the popup's.
+  - wkt reads `#{client_name}` when the picker starts, into `TMUX_CLIENT`, and passes `switch-client -c <client>` and `display-message -t <client>`. `display-message -c` does **not** fix the session check.
+  - This completes S15's fallback. Without it, `Ctrl-D` on the popup client's own session killed it without switching the client away.
+  - `Ctrl-X` runs `rm_merged` on the list it showed for confirmation, rather than `cmd_rm`, so what you confirm is what goes.
 
 ## Command contracts
 
@@ -424,3 +430,4 @@ Ask of every PR:
 - 2026-11-17: phase A3 landed as #12. tmux 3.8 can't change `session_path` cleanly, so a renamed session keeps its old starting folder and the tag carries the new path, as the Renaming contract allowed.
 - 2026-11-17: phase A4 landed as #13. Plan amended with S20: squash-merged commits count as pushed, the branch is deleted only when nothing would be lost, the default branch is protected in every layout, and Herdr closes late.
 - 2026-11-17: phase A5 landed as #14. Skipped worktrees are listed before the question, and the summary only counts them.
+- 2026-11-17: phase A6 landed as #15. Plan amended with S21: client pinning inside popups, and `Ctrl-X` reusing the list it confirmed.
