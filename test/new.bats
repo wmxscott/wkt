@@ -2,7 +2,7 @@
 
 load test_helper
 
-LIST=$'list-sessions -F #{session_name}\t#{@wkt-worktree}\t#{session_path}'
+LIST=$'list-sessions -F #{session_name}\t#{@wkt-worktree}\t#{session_path}\t#{session_last_attached}'
 
 setup() {
     common_setup

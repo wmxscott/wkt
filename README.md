@@ -23,6 +23,7 @@ Herdr can create worktrees itself, and wkt uses Herdr's `worktree open` to show 
 - **Fresh starting point.** A new branch starts from the default branch, or `-s <source>`, after fetching it from origin, so it isn't based on a stale local copy.
 - **Reopening.** Asking again for a branch that already has a worktree, wherever it is, opens that worktree.
 - **Renaming.** Herdr has no rename for worktrees. `wkt rename` renames the branch locally and on origin, moves the directory and points the worktree's Herdr workspace, if it has one, at the new path.
+- **Removing.** `wkt rm` closes the worktree's Herdr workspace and tmux session, removes the folder, and deletes the branch once its pull request is merged, refusing when that would lose work.
 - **`.bare` layouts.** `wkt setup` clones a repository into a layout where every branch is a sibling folder, `wkt adopt` converts a clone you already have, and `wkt new` keeps to it.
 
 ## Install
@@ -45,9 +46,9 @@ install wkt/bin/wkt ~/.local/bin/
 
 ### Optional dependencies
 
-Herdr is optional, and wkt never opens anything in it unless you pass `--herdr`. Then, if `herdr` isn't on your `PATH` or can't reach the server, wkt still does the git work, prints a warning with the `herdr` command to run later, and exits successfully. The picker and `wkt rename` also ask Herdr which worktrees have a workspace, and say nothing when it isn't there to answer.
+Herdr is optional, and wkt never opens anything in it unless you pass `--herdr`. Then, if `herdr` isn't on your `PATH` or can't reach the server, wkt still does the git work, prints a warning with the `herdr` command to run later, and exits successfully. The picker, `wkt rename` and `wkt rm` also ask Herdr which worktrees have a workspace, and say nothing when it isn't there to answer.
 
-tmux is optional too, and wkt only opens a session when you pass `--tmux`. Then, if `tmux` isn't on your `PATH`, or a tmux command fails, wkt still does the git work, warns, and exits successfully. `wkt rename` also asks tmux which session has the worktree, and says nothing when there's no tmux to answer.
+tmux is optional too, and wkt only opens a session when you pass `--tmux`. Then, if `tmux` isn't on your `PATH`, or a tmux command fails, wkt still does the git work, warns, and exits successfully. `wkt rename` and `wkt rm` also ask tmux which session has the worktree, and say nothing when there's no tmux to answer.
 
 The [picker](#the-picker) needs a little more:
 
@@ -61,6 +62,7 @@ The [picker](#the-picker) needs a little more:
 wkt [--herdr]
 wkt new -b <branch> [-s <source>] [-n <name>] [--tmux | --herdr]
 wkt rename -b <new-branch> [-n <name>] [-y]
+wkt rm [-b <branch>] [-f]
 wkt setup <repo-url>
 wkt adopt
 wkt --help | --version
@@ -147,6 +149,32 @@ If the branch has an open pull request, it stops and asks first. GitHub closes a
 | `-y` | Rename even when an open pull request would be closed |
 
 It won't rename the main checkout of a normal clone, a detached `HEAD`, or onto a branch or folder that already exists.
+
+### `wkt rm`
+
+Run it from inside a worktree to remove that worktree, or pass `-b <branch>`, anywhere in the repository, to remove the one that has `<branch>` checked out. It:
+
+1. Checks nothing would be lost. It stops if `git status` shows anything, untracked files included, or if the branch has commits that were never pushed: commits that aren't on its upstream, or without one, on none of origin's branches. In a repository without an origin, that means commits that aren't on the local default branch. Nothing counts as never pushed when the default branch already has it, or when it's in a pull request that was merged, even after a squash merge deleted the branch on origin. A commit you made after the pull request's last one still counts. `-f` removes the worktree anyway.
+2. Removes the folder with `git worktree remove`, along with any folders a branch name with slashes left empty. If git can't remove it, wkt stops there, leaving the branch, the Herdr workspace and the tmux session alone, and exits with git's status.
+3. Deletes the local branch only when nothing on it would be lost: its pull request was merged and has all of its commits, or origin's default branch already has the branch's last commit, as it does for a branch that was never used. Without an origin, the local default branch stands in for origin's. Otherwise it keeps the branch and says why, so after `-f`, commits made after a merged pull request's last one stay on the branch. It never touches the branch on origin, and a detached worktree has no branch to delete.
+4. Closes the worktree's Herdr workspace, if it has one. If Herdr can't, wkt warns with the command to run later and carries on.
+5. Closes the worktree's [tmux session](#finding-a-worktrees-session), if it has one, as its very last step. If you're in that session, it first switches your client to the session you attached to most recently. If there's no other session, it opens one for the default branch's worktree, or a normal clone's main checkout, and switches to that, so you're never thrown out of tmux.
+
+It asks [`gh`](https://cli.github.com) about the branch's pull request once, before removing anything, since a squash merge leaves no trace git can see. It closes whatever workspace or session the worktree has, and needs no flag for either.
+
+```console
+$ wkt rm -b fix-login
+✓ removed fix-login  ~/.herdr/worktrees/acme/widget/fix-login  branch deleted  Herdr workspace closed
+```
+
+When you remove the worktree you're in, your shell is left in a folder that no longer exists, so `cd` to the path it prints. There's no need when wkt has switched you to another tmux session, since the one you were in is closed.
+
+| Option | |
+|---|---|
+| `-b <branch>` | Remove the worktree that has `<branch>` checked out, instead of the one you're in |
+| `-f` | Remove it even with uncommitted changes, untracked files or commits that were never pushed |
+
+It won't remove the main checkout of a normal clone or the worktree that has the default branch checked out, in any layout, and with `-b`, the branch must have a worktree.
 
 ### `wkt setup`
 

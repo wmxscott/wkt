@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | in progress · next: A4 |
+| **Status** | in progress · next: A5 |
 | **Updated** | 2026-11-17 |
 | **Tracker** | — |
 | **Related** | [approved design](../superpowers/specs/2026-11-17-tmux-mode-design.md); tmux core design in `wmxscott/dotfiles`, `docs/superpowers/specs/2026-11-16-tmux-core-design.md` |
@@ -57,15 +57,15 @@ wkt opens worktrees as tmux sessions when asked with `--tmux`, keeps them in ste
   - `rename` re-points an existing workspace with `herdr worktree open --path <new> --label …`, without `--focus`. It never creates a workspace where none existed.
   - The README promise "wkt only talks to it when run inside Herdr" goes, and so does `rename.bats`'s "outside Herdr: renames without calling herdr".
   - *Rejected:* keeping the limit. The user runs wkt from tmux during the migration, and the limit would leave workspaces pointing at deleted folders.
-- **S7 `wkt rm` safety.** It refuses, unless `-f` is given, when:
+- **S7 `wkt rm` safety.** *(Amended by S20.)* It refuses, unless `-f` is given, when:
   - `git status --porcelain` shows anything, including untracked files, or
   - the branch has commits that aren't on origin. With an upstream, that's `git rev-list @{u}..HEAD`. Without one, it's `git rev-list HEAD --not --remotes=origin`.
-- **S8 When `rm` deletes the local branch.** It runs `git branch -D` only if either:
+- **S8 When `rm` deletes the local branch.** *(Superseded by S20.)* It runs `git branch -D` only if either:
   - `gh pr view <branch> --json state` says `MERGED`. The user squash-merges, so git alone can't tell, or
   - the branch tip is an ancestor of `origin/<default>`, or of the local default branch when there's no origin. This covers branches that were never used.
 
   Otherwise it keeps the branch and says so. It never touches the branch on origin.
-- **S9 `wkt rm` refuses:**
+- **S9 `wkt rm` refuses:** *(Amended by S20: the default branch is protected in every layout.)*
   - the main checkout of a normal clone
   - the default branch's worktree in a `.bare` layout
   - a `-b <branch>` that has no worktree
@@ -121,6 +121,17 @@ wkt opens worktrees as tmux sessions when asked with `--tmux`, keeps them in ste
     - The tmux helpers are `tmux_sessions`, `tmux_find`, `tmux_free`, `tmux_name` and `tmux_open`.
     - The flag parser is `take_open_flags`, which sets `OPEN_IN`.
 
+- **S20 `rm` rules, amended in A4 (2026-11-17).** A4 found three problems with S7–S9.
+  1. **Squash merges.** Once GitHub deletes a merged branch and fetches prune it, `@{u}` is gone, and S7's fallback flags the merged commits as never pushed. That would make `rm`, and `--merged`, refuse exactly the branches they exist to clean up.
+     - `rm` makes one `gh pr view <branch> --json state,headRefOid` call before removing the folder.
+     - Commits in a `MERGED` PR count as pushed: HEAD is `headRefOid`, or an ancestor of it that exists locally.
+     - A HEAD that's already in the default branch passes too, without calling `gh`.
+  2. **Branch deletion** happens only when nothing would be lost: HEAD is in the default branch, or in the merged PR. With `-f`, a branch with commits beyond the merged PR loses its folder but keeps the branch, with a note saying why.
+  3. **The default branch's worktree** is refused in every layout, not only `.bare`.
+  4. **Order:** the Herdr workspace now closes after removal (see the `wkt rm` contract). Closing it first could kill wkt partway when it runs inside that workspace.
+  5. **A failed leave:** if switching away from the session fails, the session is kept and the kill command is printed, so a client is never dropped out of tmux.
+  6. **Rejected:** keeping S7 as written, which would have made squash-merged worktrees need `-f`.
+
 ## Command contracts
 
 ### `wkt new`
@@ -148,9 +159,9 @@ wkt opens worktrees as tmux sessions when asked with `--tmux`, keeps them in ste
   1. Resolve the target worktree.
   2. Apply the S9 refusals.
   3. Apply the S7 checks, unless `-f`.
-  4. Close the Herdr workspace.
-  5. `git worktree remove`, with `--force` only under `-f`.
-  6. Apply the S8 branch rule.
+  4. `git worktree remove`, with `--force` only under `-f`.
+  5. Apply the branch rule (S20).
+  6. Close the Herdr workspace. Its id is looked up before the folder goes.
   7. Leave and kill the tmux session (S10).
 - **Output:** a `✓` line naming what went: the folder, the branch or the kept branch, the session and the workspace.
 - **Without `-b`,** the target is the worktree the shell is in. Outside tmux, the last line tells the user to `cd` to the main worktree, since their folder is gone.
@@ -195,7 +206,7 @@ Follow S10. Run the kill as the last command, via `tmux kill-session -t <name>`,
 - **Open:** `herdr worktree open --cwd <common-dir> --path <wt> [--label] --focus`, as today.
 - **Find:** `herdr workspace list` JSON, matching `checkout_path` resolved with `:A`. That's today's parsing in `ui_herdr_paths`. Extend it to capture each workspace's id for closing.
 - **Re-point on rename:** the open command above, without `--focus`, and only when the find step matched.
-- **Close on rm:** `herdr workspace close <id>`. The builder checks whether `herdr worktree remove` is the better fit, but wkt must stay the one deleting the folder and branch.
+- **Close on rm:** `herdr workspace close <id>`, after the folder and branch are handled (S20). The builder checks whether `herdr worktree remove` is the better fit, but wkt must stay the one deleting the folder and branch.
 - **Failure:** a lookup failure is silent. An open, re-point or close failure warns with the `herdr` command to run by hand, and the exit status stays 0, as today.
 
 ## Failure semantics
@@ -411,3 +422,4 @@ Ask of every PR:
 - 2026-11-17: phase A1 landed as #10.
 - 2026-11-17: phase A2 landed as #11. Plan amended with S19 and the Tag line, for the `=<name>:` target that A2 found.
 - 2026-11-17: phase A3 landed as #12. tmux 3.8 can't change `session_path` cleanly, so a renamed session keeps its old starting folder and the tag carries the new path, as the Renaming contract allowed.
+- 2026-11-17: phase A4 landed as #13. Plan amended with S20: squash-merged commits count as pushed, the branch is deleted only when nothing would be lost, the default branch is protected in every layout, and Herdr closes late.
