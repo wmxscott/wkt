@@ -307,18 +307,20 @@ setup() {
     [ -z "$(herdr_calls)" ]
 }
 
-@test "--no-herdr is accepted and changes nothing" {
+@test "--no-herdr: unknown option, nothing made" {
     make_layout
     cd "$LAYOUT/main"
-    run --separate-stderr wkt new --no-herdr -b topic
-    [ "$status" -eq 0 ]
-    [ -d "$LAYOUT/topic" ]
-    [ -z "$(herdr_calls)" ]
-    [ "$(last_line)" = "✓ topic  ../topic" ]
+    run wkt new --no-herdr -b topic
+    [ "$status" -eq 2 ]
+    contains "$output" "Unknown option: --no-herdr"
+    contains "$output" "Run 'wkt new --help' for usage."
+    [ ! -e "$LAYOUT/topic" ]
 
     run wkt new --herdr -b other --no-herdr
-    [ "$status" -eq 0 ]
-    [ "$(herdr_calls)" = "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/other --focus" ]
+    [ "$status" -eq 2 ]
+    contains "$output" "Unknown option: --no-herdr"
+    [ ! -e "$LAYOUT/other" ]
+    [ -z "$(herdr_calls)" ]
 }
 
 @test "--tmux and --herdr together: usage error, nothing made" {

@@ -59,10 +59,13 @@ gone_upstream() {
     no_branch feat/login
 }
 
-@test "--no-herdr is accepted and changes nothing" {
+@test "--no-herdr: unknown option, nothing removed" {
     run wkt rm --no-herdr
-    [ "$status" -eq 0 ]
-    [ ! -e "$LAYOUT/topic" ]
+    [ "$status" -eq 2 ]
+    contains "$output" "Unknown option: --no-herdr"
+    contains "$output" "Run 'wkt rm --help' for usage."
+    [ -d "$LAYOUT/topic" ]
+    has_branch topic
 }
 
 # --- refusals --------------------------------------------------------------
