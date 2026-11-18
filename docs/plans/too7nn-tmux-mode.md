@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | in progress · next: A2 |
+| **Status** | in progress · next: A3 |
 | **Updated** | 2026-11-17 |
 | **Tracker** | — |
 | **Related** | [approved design](../superpowers/specs/2026-11-17-tmux-mode-design.md); tmux core design in `wmxscott/dotfiles`, `docs/superpowers/specs/2026-11-16-tmux-core-design.md` |
@@ -111,6 +111,16 @@ wkt opens worktrees as tmux sessions when asked with `--tmux`, keeps them in ste
   - **Version:** 2.1.0 rather than 3.0.0, because the user asked for it within 2.x.
   - **Before C2 lands,** the user's machines must have the updated ai-toolkit plugins. Otherwise an agent still following the old `landing-changes` skill would get a usage error.
 
+- **S19 tmux facts found in A2** (checked on tmux 3.8 with a throwaway server).
+  - `set-option` takes a pane target, so the exact form `-t "=<name>"` fails with "No such session". `-t "=<name>:"` works. `switch-client -t "=<name>"` is fine.
+  - tmux accepts `.` and `:` in session names, but targets treat them as separators, so S4's replacement stays.
+  - `-c` paths are stored as given, without resolving symlinks, so `session_path` is resolved with `:A` before comparing.
+  - S14 is out of date. Search by name, not by line number.
+    - `ui_herdr_paths` is now `herdr_paths` (`HERDR_PATHS`).
+    - The org and repo parsing is `org_repo` (`REPO_ORG`, `REPO_NAME`).
+    - The tmux helpers are `tmux_sessions`, `tmux_find`, `tmux_free`, `tmux_name` and `tmux_open`.
+    - The flag parser is `take_open_flags`, which sets `OPEN_IN`.
+
 ## Command contracts
 
 ### `wkt new`
@@ -163,7 +173,7 @@ wkt opens worktrees as tmux sessions when asked with `--tmux`, keeps them in ste
 Follow S4. A single function returns the name for a worktree path. `new`, `rename` and the default-branch fallback in `rm` all use it.
 
 ### Tagging and finding
-- **Tag:** `set-option -t <s> @wkt-worktree <abs-path>` whenever wkt creates or renames a session.
+- **Tag:** `set-option -t "=<name>:" @wkt-worktree <abs-path>` whenever wkt creates or renames a session. The trailing `:` is needed (S19).
 - **Find:** a single query, `list-sessions -F '#{session_name}\t#{@wkt-worktree}\t#{session_path}'`, then apply the S5 rule in zsh.
 
 ### Opening
@@ -399,3 +409,4 @@ Ask of every PR:
 - 2026-11-17: plan written from the approved design.
 - 2026-11-17: plan amended. Added S18 and Stack C, to remove `--no-herdr` in 2.1.0 once the skills and docket stop passing it, as the user asked.
 - 2026-11-17: phase A1 landed as #10.
+- 2026-11-17: phase A2 landed as #11. Plan amended with S19 and the Tag line, for the `=<name>:` target that A2 found.
