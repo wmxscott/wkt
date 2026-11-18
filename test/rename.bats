@@ -170,12 +170,15 @@ setup() {
     contains "$output" "Herdr workspace updated"
 }
 
-@test "--no-herdr is accepted and changes nothing" {
+@test "--no-herdr: unknown option, nothing renamed" {
     STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/topic") run wkt rename --no-herdr -b better
-    [ "$status" -eq 0 ]
-    [ -d "$LAYOUT/better" ]
-    contains "$(herdr_calls)" "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/better --label better"
-    contains "$output" "Herdr workspace updated"
+    [ "$status" -eq 2 ]
+    contains "$output" "Unknown option: --no-herdr"
+    contains "$output" "Run 'wkt rename --help' for usage."
+    [ -d "$LAYOUT/topic" ]
+    [ ! -e "$LAYOUT/better" ]
+    [ "$(git -C "$LAYOUT/topic" branch --show-current)" = topic ]
+    [ -z "$(herdr_calls)" ]
 }
 
 @test "without herdr: renames, says nothing about Herdr" {

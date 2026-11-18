@@ -6,7 +6,7 @@
 emulate -R zsh
 setopt err_exit pipe_fail
 
-VERSION=2.0.0
+VERSION=2.1.0
 PROG=${0:t}
 SELF=${0:A}
 
@@ -39,6 +39,14 @@ usage_error() {
     print -ru2 -- "${ERR_RED}error:${ERR_RESET} $2"
     print -ru2 -- "Run '$PROG${cmd:+ $cmd} --help' for usage."
     exit 2
+}
+
+# unknown_option <command> <OPTARG> <word>: report the option getopts rejected,
+# exit 2. getopts sees --name as a bad -, so for that, name the whole <word>.
+unknown_option() {
+    local opt=-$2
+    [[ $2 == - ]] && opt=$3
+    usage_error "$1" "Unknown option: $opt"
 }
 
 usage() {
@@ -180,8 +188,7 @@ wants_help() {
 }
 
 # take_open_flags <command> <args...>: set OPEN_IN to herdr or tmux from
-# --herdr or --tmux, drop --no-herdr, which callers still pass but which does
-# nothing now, and leave the rest in ARGS.
+# --herdr or --tmux, and leave the rest in ARGS.
 typeset -g OPEN_IN=
 typeset -ga ARGS
 take_open_flags() {
@@ -194,7 +201,6 @@ take_open_flags() {
                 [[ -z $OPEN_IN || $OPEN_IN == ${arg#--} ]] ||
                     usage_error "$cmd" "--tmux and --herdr can't be used together."
                 OPEN_IN=${arg#--} ;;
-            --no-herdr ) ;;
             * ) ARGS+=("$arg") ;;
         esac
     done
@@ -704,7 +710,7 @@ cmd_new() {
             n ) label=$OPTARG ;;
             h ) usage_new; exit 0 ;;
             : ) usage_error new "Option -$OPTARG needs a value." ;;
-            * ) usage_error new "Unknown option: -$OPTARG" ;;
+            * ) unknown_option new "$OPTARG" "${argv[OPTIND]}" ;;
         esac
     done
     shift $(( OPTIND - 1 ))
@@ -805,7 +811,7 @@ cmd_rename() {
             y ) auto_yes=1 ;;
             h ) usage_rename; exit 0 ;;
             : ) usage_error rename "Option -$OPTARG needs a value." ;;
-            * ) usage_error rename "Unknown option: -$OPTARG" ;;
+            * ) unknown_option rename "$OPTARG" "${argv[OPTIND]}" ;;
         esac
     done
     shift $(( OPTIND - 1 ))
@@ -1120,7 +1126,7 @@ cmd_rm() {
             y ) yes=1 ;;
             h ) usage_rm; exit 0 ;;
             : ) usage_error rm "Option -$OPTARG needs a value." ;;
-            * ) usage_error rm "Unknown option: -$OPTARG" ;;
+            * ) unknown_option rm "$OPTARG" "${argv[OPTIND]}" ;;
         esac
     done
     shift $(( OPTIND - 1 ))
@@ -1737,7 +1743,7 @@ case "${1-}" in
     -h | --help | help ) usage ;;
     -V | --version ) print -r -- "wkt $VERSION" ;;
     __preview ) shift; ui_theme; ui_preview "$@" ;;
-    "" | --herdr | --tmux | --no-herdr )
+    "" | --herdr | --tmux )
         if [[ -t 0 && -t 2 || -n ${WKT_ASSUME_TTY-} ]]; then
             cmd_ui "$@"
         else

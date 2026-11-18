@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | in progress · next: C2 |
+| **Status** | in progress · next: C3 |
 | **Updated** | 2026-11-17 |
 | **Tracker** | — |
 | **Related** | [approved design](../superpowers/specs/2026-11-17-tmux-mode-design.md); tmux core design in `wmxscott/dotfiles`, `docs/superpowers/specs/2026-11-16-tmux-core-design.md` |
@@ -449,3 +449,4 @@ Ask of every PR:
 - 2026-11-18: R1 landed as homebrew-tap#13 (wkt 2.0.0 installed with `brew upgrade`). R2 landed as dotfiles-private#4, merged into the `wmxscott` branch around the user's uncommitted work. R3 landed as dotfiles#44. R4 landed as ai-toolkit#31, after ai-toolkit#32 fixed a pre-existing type-check failure, and the plugins were updated on this machine. Stack R is done.
 - 2026-11-18: plan amended. Added S22 and phase C0, the user's request that switching corrects a session's name, which ships with C2 in 2.1.0.
 - 2026-11-18: phase C0 landed as #17. The clash check now excludes only the session being named (S22 over S4). Phase C1 landed as docket#176.
+- 2026-11-18: phase C2 landed as #18 (wkt 2.1.0). Unknown long options now name the whole word. Before merging, the project-scope ai-toolkit plugins in the private dotfiles were updated too, since they still passed `--no-herdr`.

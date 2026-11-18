@@ -115,14 +115,22 @@ row_path() { fzf_input 1 | sed -n "${1}p" | cut -f 4; }
     lacks "$(herdr_calls)" "worktree open"
 }
 
-@test "--no-herdr is accepted and changes nothing" {
+@test "--no-herdr: unknown option, no picker" {
     make_layout
     cd "$LAYOUT"
-    fzf_reply 1 0 "" "" $'x\tmain\t\t'"$LAYOUT/main"
     run --separate-stderr wkt --no-herdr
-    [ "$status" -eq 0 ]
-    [ "$output" = "$LAYOUT/main" ]
-    lacks "$(herdr_calls)" "worktree open"
+    [ "$status" -eq 2 ]
+    [ -z "$output" ]
+    contains "$stderr" "Unknown option: --no-herdr"
+    contains "$stderr" "Run 'wkt --help' for usage."
+
+    run --separate-stderr wkt --tmux --no-herdr
+    [ "$status" -eq 2 ]
+    [ -z "$output" ]
+    contains "$stderr" "Unknown option: --no-herdr"
+    [ "$(fzf_calls)" -eq 0 ]
+    [ -z "$(herdr_calls)" ]
+    [ -z "$(tmux_calls)" ]
 }
 
 @test "esc: prints nothing, exit 130" {
