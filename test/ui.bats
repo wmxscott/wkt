@@ -63,7 +63,7 @@ row_path() { fzf_input 1 | sed -n "${1}p" | cut -f 4; }
 @test "rows: one per worktree, .bare left out" {
     make_layout
     cd "$LAYOUT"
-    wkt new -b topic --no-herdr >/dev/null
+    wkt new -b topic >/dev/null
     fzf_reply 1 130
     run --separate-stderr wkt
     [ "$status" -eq 130 ]
@@ -77,7 +77,7 @@ row_path() { fzf_input 1 | sed -n "${1}p" | cut -f 4; }
     make_layout
     cd "$LAYOUT"
     git worktree remove main
-    wkt new -b aaa --no-herdr >/dev/null
+    wkt new -b aaa >/dev/null
     git worktree add --quiet main main
     [ "$(git worktree list --porcelain | grep '^worktree ' | sed -n 2p)" = "worktree $LAYOUT/aaa" ]
 
@@ -104,15 +104,25 @@ row_path() { fzf_input 1 | sed -n "${1}p" | cut -f 4; }
     lacks "$(fzf_args 1)" "load:pos"
 }
 
-@test "enter: prints the worktree path and nothing else" {
-    unset HERDR_TAB_ID
+@test "enter: prints the worktree path and nothing else, even inside Herdr" {
     make_layout
     cd "$LAYOUT"
-    wkt new -b topic --no-herdr >/dev/null
+    wkt new -b topic >/dev/null
     fzf_reply 1 0 "" "" $'x\ttopic\ttopic\t'"$LAYOUT/topic"
     run --separate-stderr wkt
     [ "$status" -eq 0 ]
     [ "$output" = "$LAYOUT/topic" ]
+    lacks "$(herdr_calls)" "worktree open"
+}
+
+@test "--no-herdr is accepted and changes nothing" {
+    make_layout
+    cd "$LAYOUT"
+    fzf_reply 1 0 "" "" $'x\tmain\t\t'"$LAYOUT/main"
+    run --separate-stderr wkt --no-herdr
+    [ "$status" -eq 0 ]
+    [ "$output" = "$LAYOUT/main" ]
+    lacks "$(herdr_calls)" "worktree open"
 }
 
 @test "esc: prints nothing, exit 130" {
@@ -241,7 +251,7 @@ trigger() {
     cd "$LAYOUT"
     local wt
     for wt in topic gone held loose; do
-        wkt new -b "$wt" --no-herdr >/dev/null
+        wkt new -b "$wt" >/dev/null
     done
     rm -rf "$LAYOUT/gone"
     git worktree lock "$LAYOUT/held"
@@ -272,7 +282,7 @@ trigger() {
     long="$HOME/$(printf 'very-long-folder-name-%s/' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20)"
     long=${long%/}
     cd "$CLONE"
-    WKT_ROOT=$long wkt new -b topic --no-herdr >/dev/null
+    WKT_ROOT=$long wkt new -b topic >/dev/null
     fzf_reply 1 130
     run wkt
     local shown
@@ -323,45 +333,35 @@ plain_row() { row_for "$1" | cut -f 1-3 | sed $'s/\e\\[[0-9;]*m//g'; }
 ICO_OPEN=$'\xef\x92\xaa'
 MACCHIATO_BLUE="38;2;138;173;244"
 
-# workspaces <path>...: herdr's 'workspace list' reply, with a workspace per
-# path and one without a worktree.
-workspaces() {
-    local path list=""
-    for path in "$@"; do
-        list+='{"id":"w:'"$path"'","label":"x","worktree":{"checkout_path":"'"$path"'","is_linked_worktree":true}},'
-    done
-    printf '{"id":"cli:workspace:list","result":{"type":"workspace_list","workspaces":[%s{"id":"w:none","label":"y"}]}}' "$list"
-}
-
-@test "inside Herdr: enter opens the workspace and prints nothing" {
+@test "--herdr: enter opens the workspace and prints nothing" {
     make_layout
     cd "$LAYOUT"
-    wkt new -b topic --no-herdr >/dev/null
+    wkt new -b topic >/dev/null
     fzf_reply 1 0 "" "" $'x\ttopic\t\t'"$LAYOUT/topic"
-    run --separate-stderr wkt
+    run --separate-stderr wkt --herdr
     [ "$status" -eq 0 ]
     [ -z "$output" ]
     contains "$(herdr_calls)" "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/topic --focus"
 }
 
-@test "inside a Herdr popup: enter opens the workspace" {
+@test "--herdr outside Herdr: enter opens the workspace" {
     unset HERDR_TAB_ID
     make_layout
     cd "$LAYOUT"
-    wkt new -b topic --no-herdr >/dev/null
+    wkt new -b topic >/dev/null
     fzf_reply 1 0 "" "" $'x\ttopic\t\t'"$LAYOUT/topic"
-    HERDR_ENV=1 run --separate-stderr wkt
+    run --separate-stderr wkt --herdr
     [ "$status" -eq 0 ]
     [ -z "$output" ]
     contains "$(herdr_calls)" "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/topic --focus"
 }
 
-@test "inside Herdr: Herdr fails, the path is printed" {
+@test "--herdr: Herdr fails, the path is printed" {
     make_layout
     cd "$LAYOUT"
-    wkt new -b topic --no-herdr >/dev/null
+    wkt new -b topic >/dev/null
     fzf_reply 1 0 "" "" $'x\ttopic\t\t'"$LAYOUT/topic"
-    STUB_HERDR_FAIL=1 run --separate-stderr wkt
+    STUB_HERDR_FAIL=1 run --separate-stderr wkt --herdr
     [ "$status" -eq 0 ]
     [ "$output" = "$LAYOUT/topic" ]
     contains "$stderr" "warning:"
@@ -370,7 +370,7 @@ workspaces() {
 @test "open workspaces get the blue circle" {
     make_layout
     cd "$LAYOUT"
-    wkt new -b topic --no-herdr >/dev/null
+    wkt new -b topic >/dev/null
     STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/topic") run picker_input
     contains "$(row_for "$LAYOUT/topic")" "$ICO_OPEN"
     contains "$(row_for "$LAYOUT/topic")" "$MACCHIATO_BLUE"
@@ -378,25 +378,41 @@ workspaces() {
     contains "$(herdr_calls)" "workspace list"
 }
 
-@test "outside Herdr: workspace list is never called" {
+@test "outside Herdr: open workspaces still get the circle" {
     unset HERDR_TAB_ID
     make_layout
-    STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/main") run picker_input
-    lacks "$(herdr_calls)" "workspace list"
-    lacks "$(row_for "$LAYOUT/main")" "$ICO_OPEN"
+    cd "$LAYOUT"
+    wkt new -b topic >/dev/null
+    STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/topic") run picker_input
+    contains "$(herdr_calls)" "workspace list"
+    contains "$(row_for "$LAYOUT/topic")" "$ICO_OPEN"
 }
 
-@test "Herdr not answering: rows show no Herdr status" {
+@test "Herdr not answering: rows show no Herdr status, and no warning" {
     make_layout
     STUB_HERDR_FAIL=1 STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/main") run picker_input
     contains "$(row_for "$LAYOUT/main")" "$ICO_HOME"
     lacks "$(row_for "$LAYOUT/main")" "$ICO_OPEN"
+
+    cd "$LAYOUT"
+    rm -f "$STUB_FZF_DIR"/*
+    fzf_reply 1 130
+    STUB_HERDR_FAIL=1 run --separate-stderr wkt
+    [ "$status" -eq 130 ]
+    [ -z "$stderr" ]
+
+    rm "$STUB_BIN/herdr"
+    rm -f "$STUB_FZF_DIR"/*
+    fzf_reply 1 130
+    run --separate-stderr wkt
+    [ "$status" -eq 130 ]
+    [ -z "$stderr" ]
 }
 
 @test "current beats open-in-Herdr" {
     make_layout
     cd "$LAYOUT"
-    wkt new -b topic --no-herdr >/dev/null
+    wkt new -b topic >/dev/null
     fzf_reply 1 130
     cd "$LAYOUT/topic"
     STUB_HERDR_WORKSPACES=$(workspaces "$LAYOUT/topic") run wkt
@@ -410,7 +426,7 @@ MACCHIATO_YELLOW="38;2;238;212;159"
 @test "preview: a blank line, then the bold branch and the path" {
     make_layout
     cd "$LAYOUT"
-    wkt new -b topic --no-herdr >/dev/null
+    wkt new -b topic >/dev/null
     run --separate-stderr wkt __preview "$LAYOUT/topic"
     [ "$status" -eq 0 ]
     starts_with "$output" $'\n\e[1;'"${MACCHIATO_TEXT}mtopic"
@@ -421,7 +437,7 @@ MACCHIATO_YELLOW="38;2;238;212;159"
 @test "preview: changed files, coloured by kind" {
     make_layout
     cd "$LAYOUT"
-    wkt new -b topic --no-herdr >/dev/null
+    wkt new -b topic >/dev/null
     echo new >"$LAYOUT/topic/loose.txt"
     echo staged >"$LAYOUT/topic/staged.txt"
     git -C "$LAYOUT/topic" add staged.txt
@@ -451,7 +467,7 @@ MACCHIATO_YELLOW="38;2;238;212;159"
 @test "preview: a missing folder says so" {
     make_layout
     cd "$LAYOUT"
-    wkt new -b topic --no-herdr >/dev/null
+    wkt new -b topic >/dev/null
     rm -rf "$LAYOUT/topic"
     run --separate-stderr wkt __preview "$LAYOUT/topic"
     [ "$status" -eq 0 ]
@@ -475,7 +491,6 @@ MACCHIATO_YELLOW="38;2;238;212;159"
 }
 
 @test "ctrl-n: branch, source, then created and printed" {
-    unset HERDR_TAB_ID
     make_layout
     cd "$LAYOUT"
     fzf_reply 1 0 "" ctrl-n ""
@@ -489,6 +504,8 @@ MACCHIATO_YELLOW="38;2;238;212;159"
     contains "$(fzf_args 2)" $'--prompt\nBranch: '
     contains "$(fzf_args 2)" "New worktree"
     contains "$(fzf_args 3)" $'--prompt\nSource: '
+    [ "$(fzf_calls)" -eq 3 ]
+    lacks "$(herdr_calls)" "worktree open"
 }
 
 @test "ctrl-n: the search text is the default branch name" {
@@ -559,7 +576,6 @@ MACCHIATO_YELLOW="38;2;238;212;159"
 }
 
 @test "existing branch skips the source step" {
-    unset HERDR_TAB_ID
     make_clone
     cd "$CLONE"
     fzf_reply 1 0 "" ctrl-n ""
@@ -571,14 +587,14 @@ MACCHIATO_YELLOW="38;2;238;212;159"
     [ "$(git -C "$output" rev-parse --abbrev-ref '@{upstream}')" = origin/feature-x ]
 }
 
-@test "inside Herdr: label step, then opened with the label" {
+@test "--herdr: label step, then opened with the label" {
     make_layout
     cd "$LAYOUT"
     fzf_reply 1 0 "" ctrl-n ""
     fzf_reply 2 1 topic
     fzf_reply 3 0 main
     fzf_reply 4 1 Login ""
-    run --separate-stderr wkt
+    run --separate-stderr wkt --herdr
     [ "$status" -eq 0 ]
     [ -z "$output" ]
     contains "$(fzf_args 4)" $'--prompt\nLabel: '
@@ -586,7 +602,7 @@ MACCHIATO_YELLOW="38;2;238;212;159"
     contains "$(herdr_calls)" "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/topic --label Login --focus"
 }
 
-@test "inside a Herdr popup: label step, then opened" {
+@test "--herdr outside Herdr: label step, then opened" {
     unset HERDR_TAB_ID
     make_layout
     cd "$LAYOUT"
@@ -594,21 +610,21 @@ MACCHIATO_YELLOW="38;2;238;212;159"
     fzf_reply 2 1 topic
     fzf_reply 3 0 main
     fzf_reply 4 1 "" ""
-    HERDR_ENV=1 run --separate-stderr wkt
+    run --separate-stderr wkt --herdr
     [ "$status" -eq 0 ]
     [ -z "$output" ]
     contains "$(fzf_args 4)" $'--prompt\nLabel: '
     contains "$(herdr_calls)" "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/topic --focus"
 }
 
-@test "inside Herdr: ctrl-o skips Herdr" {
+@test "--herdr: ctrl-o skips Herdr" {
     make_layout
     cd "$LAYOUT"
     fzf_reply 1 0 "" ctrl-n ""
     fzf_reply 2 1 topic
     fzf_reply 3 0 main
     fzf_reply 4 0 "" ctrl-o
-    run --separate-stderr wkt
+    run --separate-stderr wkt --herdr
     [ "$status" -eq 0 ]
     [ "$output" = "$LAYOUT/topic" ]
     lacks "$(herdr_calls)" "worktree open"
@@ -630,7 +646,6 @@ MACCHIATO_YELLOW="38;2;238;212;159"
 }
 
 @test "a failing new worktree ends the picker with its error" {
-    unset HERDR_TAB_ID
     make_layout
     cd "$LAYOUT"
     mkdir "$LAYOUT/topic"
@@ -645,7 +660,6 @@ MACCHIATO_YELLOW="38;2;238;212;159"
 }
 
 @test "a git failure while creating stops the picker" {
-    unset HERDR_TAB_ID
     make_layout
     cd "$LAYOUT"
     : >"$LAYOUT/fix"

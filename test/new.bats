@@ -17,7 +17,7 @@ setup() {
     [ -d "$LAYOUT/topic" ]
     [ "$(git -C "$LAYOUT/topic" branch --show-current)" = topic ]
     [ "$(rev "$LAYOUT/topic" HEAD)" = "$(rev "$LAYOUT" origin/main)" ]
-    [ "$(last_line)" = "✓ topic  ../topic  opened in Herdr" ]
+    [ "$(last_line)" = "✓ topic  ../topic" ]
 }
 
 @test "bare layout: works from the layout root" {
@@ -26,7 +26,7 @@ setup() {
     run wkt new -b topic
     [ "$status" -eq 0 ]
     [ -d "$LAYOUT/topic" ]
-    [ "$(last_line)" = "✓ topic  topic  opened in Herdr" ]
+    [ "$(last_line)" = "✓ topic  topic" ]
 }
 
 @test "bare layout: new branch doesn't track its source" {
@@ -46,28 +46,29 @@ setup() {
     [ "$(git -C "$LAYOUT/feat/login" branch --show-current)" = feat/login ]
 }
 
-@test "herdr is told the repo and the worktree path" {
+@test "--herdr: herdr is told the repo and the worktree path" {
     make_layout
     cd "$LAYOUT/main"
-    run wkt new -b topic
+    run wkt new --herdr -b topic
     [ "$status" -eq 0 ]
     [ "$(herdr_calls)" = "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/topic --focus" ]
+    [ "$(last_line)" = "✓ topic  ../topic  opened in Herdr" ]
 }
 
-@test "-n passes a label to herdr" {
+@test "--herdr: -n passes a label to herdr" {
     make_layout
     cd "$LAYOUT/main"
-    run wkt new -b topic -n "Login page"
+    run wkt new -b topic -n "Login page" --herdr
     [ "$status" -eq 0 ]
     [ "$(herdr_calls)" = "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/topic --label Login page --focus" ]
     [ "$(last_line)" = "✓ topic (Login page)  ../topic  opened in Herdr" ]
 }
 
-@test "inside a Herdr popup: opened from HERDR_ENV alone" {
+@test "--herdr outside Herdr: opened all the same" {
     unset HERDR_TAB_ID
     make_layout
     cd "$LAYOUT/main"
-    HERDR_ENV=1 run wkt new -b topic
+    run wkt new --herdr -b topic
     [ "$status" -eq 0 ]
     [ "$(herdr_calls)" = "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/topic --focus" ]
     [ "$(last_line)" = "✓ topic  ../topic  opened in Herdr" ]
@@ -156,7 +157,7 @@ setup() {
     wkt new -b topic >/dev/null 2>&1
     head_before="$(rev "$LAYOUT/topic" HEAD)"
     : >"$STUB_HERDR_LOG"
-    run wkt new -b topic -n again
+    run wkt new --herdr -b topic -n again
     [ "$status" -eq 0 ]
     [ "$(rev "$LAYOUT/topic" HEAD)" = "$head_before" ]
     lacks "$output" "branching from"
@@ -166,7 +167,7 @@ setup() {
 @test "branch checked out elsewhere reuses that worktree" {
     make_clone
     cd "$CLONE"
-    run wkt new -b main
+    run wkt new --herdr -b main
     [ "$status" -eq 0 ]
     [ ! -e "$HOME/.herdr/worktrees/acme/widget/main" ]
     [ "$(herdr_calls)" = "worktree open --cwd $CLONE/.git --path $CLONE --focus" ]
@@ -198,7 +199,7 @@ setup() {
 @test "normal repo: worktree goes under ~/.herdr/worktrees/<org>/<repo> by default" {
     make_clone
     cd "$CLONE"
-    run wkt new -b topic
+    run wkt new --herdr -b topic
     [ "$status" -eq 0 ]
     wt="$HOME/.herdr/worktrees/acme/widget/topic"
     [ "$(git -C "$wt" branch --show-current)" = topic ]
@@ -284,33 +285,46 @@ setup() {
     [ "$(git -C "$LAYOUT" worktree list --porcelain | grep -c '^worktree ')" -eq 3 ]
 }
 
-# --- without Herdr --------------------------------------------------------
+# --- opening ---------------------------------------------------------------
 
-@test "outside Herdr: worktree is made, herdr isn't called, no warning" {
-    unset HERDR_TAB_ID
+@test "without --herdr: herdr isn't called, even inside Herdr" {
     make_layout
     cd "$LAYOUT/main"
-    run --separate-stderr wkt new -b topic
-    [ "$status" -eq 0 ]
-    [ -d "$LAYOUT/topic" ]
-    lacks "$stderr" "warning"
-    [ -z "$(herdr_calls)" ]
-    [ "$(last_line)" = "✓ topic  ../topic" ]
-}
-
-@test "--no-herdr: worktree is made, herdr isn't called" {
-    make_layout
-    cd "$LAYOUT/main"
-    run --separate-stderr wkt new --no-herdr -b topic -n "Label"
+    run --separate-stderr wkt new -b topic -n "Label"
     [ "$status" -eq 0 ]
     [ -d "$LAYOUT/topic" ]
     lacks "$stderr" "warning"
     [ -z "$(herdr_calls)" ]
     [ "$(last_line)" = "✓ topic (Label)  ../topic" ]
 
-    run wkt new -b other --no-herdr
+    unset HERDR_TAB_ID
+    HERDR_ENV=1 run wkt new -b other
     [ "$status" -eq 0 ]
+    [ -d "$LAYOUT/other" ]
     [ -z "$(herdr_calls)" ]
+}
+
+@test "--no-herdr is accepted and changes nothing" {
+    make_layout
+    cd "$LAYOUT/main"
+    run --separate-stderr wkt new --no-herdr -b topic
+    [ "$status" -eq 0 ]
+    [ -d "$LAYOUT/topic" ]
+    [ -z "$(herdr_calls)" ]
+    [ "$(last_line)" = "✓ topic  ../topic" ]
+
+    run wkt new --herdr -b other --no-herdr
+    [ "$status" -eq 0 ]
+    [ "$(herdr_calls)" = "worktree open --cwd $LAYOUT/.bare --path $LAYOUT/other --focus" ]
+}
+
+@test "--tmux isn't supported yet" {
+    make_layout
+    cd "$LAYOUT/main"
+    run wkt new -b topic --tmux
+    [ "$status" -eq 2 ]
+    contains "$output" "--tmux isn't supported yet"
+    [ ! -e "$LAYOUT/topic" ]
 }
 
 @test "without herdr on PATH: worktree is made, warning, exit 0" {
@@ -319,7 +333,7 @@ setup() {
     [ "$status" -ne 0 ]
     make_layout
     cd "$LAYOUT/main"
-    run --separate-stderr wkt new -b topic
+    run --separate-stderr wkt new --herdr -b topic
     [ "$status" -eq 0 ]
     [ -d "$LAYOUT/topic" ]
     contains "$stderr" "herdr not found on PATH"
@@ -329,7 +343,7 @@ setup() {
 @test "when herdr fails: worktree is made, warning, exit 0" {
     make_layout
     cd "$LAYOUT/main"
-    STUB_HERDR_FAIL=1 run --separate-stderr wkt new -b topic -n "My label"
+    STUB_HERDR_FAIL=1 run --separate-stderr wkt new --herdr -b topic -n "My label"
     [ "$status" -eq 0 ]
     [ -d "$LAYOUT/topic" ]
     contains "$stderr" "Herdr didn't open the worktree: {\"error\":\"server not running\"}"

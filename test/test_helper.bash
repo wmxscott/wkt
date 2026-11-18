@@ -3,9 +3,8 @@
 # environment, a throwaway HOME and git config, and stub herdr, gh, fzf and
 # defaults commands, so nothing touches a real Herdr session, GitHub,
 # terminal, macOS setting or your repos.
-# HERDR_TAB_ID is set to a dummy value so wkt behaves as if inside Herdr;
-# tests of the outside-Herdr path unset it, and tests of a Herdr popup, which
-# has no tab, swap it for HERDR_ENV=1.
+# HERDR_TAB_ID is set to a dummy value, so every test also shows that wkt
+# opens nothing in Herdr unasked; tests that must run outside Herdr unset it.
 
 bats_require_minimum_version 1.5.0
 
@@ -41,6 +40,8 @@ EOF
     ln -s "$SCRIPT" "$STUB_BIN/wkt"
     export HERDR_TAB_ID=stub-tab
 
+    # STUB_HERDR_FAIL=1 fails every herdr call; a subcommand, like worktree,
+    # fails only that one.
     export STUB_HERDR_LOG="$TMP/herdr.log"
     cat >"$STUB_BIN/herdr" <<'EOF'
 #!/bin/bash
@@ -49,7 +50,7 @@ if env | grep '^HERDR_' | grep -qvx -e 'HERDR_TAB_ID=stub-tab' -e 'HERDR_ENV=1';
     exit 99
 fi
 printf '%s\n' "$*" >>"$STUB_HERDR_LOG"
-if [[ -n ${STUB_HERDR_FAIL:-} ]]; then
+if [[ -n ${STUB_HERDR_FAIL:-} && ( $STUB_HERDR_FAIL == 1 || $STUB_HERDR_FAIL == "$1" ) ]]; then
     echo '{"error":"server not running"}' >&2
     exit 1
 fi
@@ -152,6 +153,16 @@ make_clone() {
 rev() { git -C "$1" rev-parse "$2"; }
 
 herdr_calls() { cat "$STUB_HERDR_LOG" 2>/dev/null || true; }
+
+# workspaces <path>...: herdr's 'workspace list' reply, with a workspace per
+# path and one without a worktree.
+workspaces() {
+    local path list=""
+    for path in "$@"; do
+        list+='{"id":"w:'"$path"'","label":"x","worktree":{"checkout_path":"'"$path"'","is_linked_worktree":true}},'
+    done
+    printf '{"id":"cli:workspace:list","result":{"type":"workspace_list","workspaces":[%s{"id":"w:none","label":"y"}]}}' "$list"
+}
 
 # fzf_reply <n> <code> [<line>...]: what the stub fzf does on call n.
 fzf_reply() {
