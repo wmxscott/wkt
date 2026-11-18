@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | in progress · next: R1 (Stack A landed) |
+| **Status** | in progress · next: C2 |
 | **Updated** | 2026-11-17 |
 | **Tracker** | — |
 | **Related** | [approved design](../superpowers/specs/2026-11-17-tmux-mode-design.md); tmux core design in `wmxscott/dotfiles`, `docs/superpowers/specs/2026-11-16-tmux-core-design.md` |
@@ -137,6 +137,13 @@ wkt opens worktrees as tmux sessions when asked with `--tmux`, keeps them in ste
   - wkt reads `#{client_name}` when the picker starts, into `TMUX_CLIENT`, and passes `switch-client -c <client>` and `display-message -t <client>`. `display-message -c` does **not** fix the session check.
   - This completes S15's fallback. Without it, `Ctrl-D` on the popup client's own session killed it without switching the client away.
   - `Ctrl-X` runs `rm_merged` on the list it showed for confirmation, rather than `cmd_rm`, so what you confirm is what goes.
+
+- **S22 Switching corrects the session's name (user's request, 2026-11-18).** When `--tmux`, on `new` or the picker's Enter, finds the worktree's existing session, wkt makes sure the session has the name it should have before switching.
+  - **The expected name:** `-n` if given, else the S4 name with its collision fallback. The session's own current name never counts as a clash.
+  - **If the name differs,** wkt runs `rename-session`. It always re-tags `@wkt-worktree`, which also repairs sessions restored by resurrect.
+  - **A failed rename** warns, and wkt still switches, with exit 0.
+  - **A name set with `-n`** lasts only until the next switch that doesn't pass `-n`. *(My call: the user wants names kept correct, and a custom name has nowhere durable to live, since resurrect drops `@` options.)*
+  - **Release:** this ships with S18 in 2.1.0.
 
 ## Command contracts
 
@@ -359,13 +366,20 @@ This stack runs after A and R, so it changes the same files as A without overlap
 
 | Phase | Lands | Depends on |
 |---|---|---|
+| C0 | wkt: switching to an existing session corrects its name (S22) | R4 |
 | C1 | `wmxscott/docket`: `AGENTS.md` and `CLAUDE.md` say plain `wkt new -b <branch>` | R4 |
-| C2 | wkt: `--no-herdr` removed from every command, tests flipped to expect exit 2, release 2.1.0 | C1 |
+| C2 | wkt: `--no-herdr` removed from every command, tests flipped to expect exit 2, release 2.1.0 (with C0) | C0, C1 |
 | C3 | `wmxscott/homebrew-tap`: `Formula/wkt.rb` at `v2.1.0` | C2 |
 
+- [ ] C0: switching corrects the session name
 - [ ] C1: docket stops passing `--no-herdr`
 - [ ] C2: wkt 2.1.0 drops `--no-herdr`
 - [ ] C3: tap formula 2.1.0
+
+**C0: switching corrects the session name**
+- **What changes:** `tmux_open`, when it finds an existing session, works out the expected name per S22, renames the session if it differs, re-tags it, then switches. The `✓` line says when it renamed. Update the README's tmux section.
+- **Cites:** S4, S5, S19 and S22.
+- *Shippable when:* the tests cover a misnamed session renamed on switch, a correctly named one left alone, a re-tag with no rename, `-n`, a clash going to the fallback name, and a failed rename that still switches. The same applies through the picker's Enter.
 
 **C1: docket stops passing `--no-herdr`**
 - **What changes:** the one line in each of docket's `AGENTS.md` and `CLAUDE.md`.
@@ -432,3 +446,6 @@ Ask of every PR:
 - 2026-11-17: phase A5 landed as #14. Skipped worktrees are listed before the question, and the summary only counts them.
 - 2026-11-17: phase A6 landed as #15. Plan amended with S21: client pinning inside popups, and `Ctrl-X` reusing the list it confirmed.
 - 2026-11-17: phase A7 landed as #16. Stack A is done, and v2.0.0 is tagged and released after merge.
+- 2026-11-18: R1 landed as homebrew-tap#13 (wkt 2.0.0 installed with `brew upgrade`). R2 landed as dotfiles-private#4, merged into the `wmxscott` branch around the user's uncommitted work. R3 landed as dotfiles#44. R4 landed as ai-toolkit#31, after ai-toolkit#32 fixed a pre-existing type-check failure, and the plugins were updated on this machine. Stack R is done.
+- 2026-11-18: plan amended. Added S22 and phase C0, the user's request that switching corrects a session's name, which ships with C2 in 2.1.0.
+- 2026-11-18: phase C0 landed as #17. The clash check now excludes only the session being named (S22 over S4). Phase C1 landed as docket#176.

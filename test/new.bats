@@ -391,11 +391,14 @@ setup() {
     export STUB_TMUX_SESSIONS
     TMUX=stub run wkt new -b topic --tmux
     [ "$status" -eq 0 ]
-    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" "switch-client -t =mine")" ]
-    [ "$(last_line)" = "✓ topic  ../topic  switched to mine" ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "rename-session -t =mine acme/widget/topic" \
+        "set-option -t =acme/widget/topic: @wkt-worktree $LAYOUT/topic" \
+        "switch-client -t =acme/widget/topic")" ]
+    [ "$(last_line)" = "✓ topic  ../topic  switched to acme/widget/topic (renamed from mine)" ]
 }
 
-@test "--tmux: a restored session, untagged, is found by its folder" {
+@test "--tmux: a restored session, untagged, is found by its folder and tagged" {
     make_layout
     ln -s "$LAYOUT" "$TMP/link"
     cd "$LAYOUT/main"
@@ -405,25 +408,152 @@ setup() {
     export STUB_TMUX_SESSIONS
     TMUX=stub run wkt new -b topic --tmux
     [ "$status" -eq 0 ]
-    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" "switch-client -t =widget/topic")" ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "set-option -t =widget/topic: @wkt-worktree $LAYOUT/topic" \
+        "switch-client -t =widget/topic")" ]
     [ "$(last_line)" = "✓ topic  ../topic  switched to widget/topic" ]
 
     : >"$STUB_TMUX_LOG"
     STUB_TMUX_SESSIONS="$(sessions restored "" "$LAYOUT/topic")" TMUX=stub run wkt new -b topic --tmux
     [ "$status" -eq 0 ]
-    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" "switch-client -t =restored")" ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "rename-session -t =restored widget/topic" \
+        "set-option -t =widget/topic: @wkt-worktree $LAYOUT/topic" \
+        "switch-client -t =widget/topic")" ]
 }
 
-@test "--tmux outside tmux: an existing session is left alone, with how to attach" {
+@test "--tmux outside tmux: an existing session is re-tagged, not renamed, with how to attach" {
     make_layout
     cd "$LAYOUT/main"
     STUB_TMUX_SESSIONS="$(sessions widget/topic "$LAYOUT/topic" "$LAYOUT/topic")"
     export STUB_TMUX_SESSIONS
     run wkt new -b topic --tmux
     [ "$status" -eq 0 ]
-    [ "$(tmux_calls)" = "$LIST" ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "set-option -t =widget/topic: @wkt-worktree $LAYOUT/topic")" ]
     contains "$output" "✓ topic  ../topic  already open in tmux"
+    lacks "$output" "renamed"
     [ "$(last_line)" = "→ attach with: tmux attach -t widget/topic" ]
+}
+
+@test "--tmux inside tmux: a misnamed session is renamed, re-tagged and switched to" {
+    make_layout
+    cd "$LAYOUT/main"
+    wkt new -b topic >/dev/null
+    STUB_TMUX_SESSIONS="$(sessions 0 "" "$LAYOUT/topic")" TMUX=stub run --separate-stderr wkt new -b topic --tmux
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "rename-session -t =0 widget/topic" \
+        "set-option -t =widget/topic: @wkt-worktree $LAYOUT/topic" \
+        "switch-client -t =widget/topic")" ]
+    [ -z "$stderr" ]
+    [ "$(last_line)" = "✓ topic  ../topic  switched to widget/topic (renamed from 0)" ]
+}
+
+@test "--tmux outside tmux: a misnamed session is renamed, with how to attach" {
+    make_layout
+    cd "$LAYOUT/main"
+    wkt new -b topic >/dev/null
+    STUB_TMUX_SESSIONS="$(sessions 0 "$LAYOUT/topic" "$HOME")" run --separate-stderr wkt new -b topic --tmux
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "rename-session -t =0 widget/topic" \
+        "set-option -t =widget/topic: @wkt-worktree $LAYOUT/topic")" ]
+    contains "$output" "✓ topic  ../topic  already open in tmux (renamed from 0)"
+    [ "$(last_line)" = "→ attach with: tmux attach -t widget/topic" ]
+}
+
+@test "--tmux: an existing session's name falls back to <org>/<repo>/<branch> on a clash" {
+    make_layout
+    cd "$LAYOUT/main"
+    STUB_TMUX_SESSIONS="$(sessions \
+        widget/topic "$TMP/other" "$TMP/other" \
+        0 "$LAYOUT/topic" "$LAYOUT/topic")"
+    export STUB_TMUX_SESSIONS
+    TMUX=stub run wkt new -b topic --tmux
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "rename-session -t =0 acme/widget/topic" \
+        "set-option -t =acme/widget/topic: @wkt-worktree $LAYOUT/topic" \
+        "switch-client -t =acme/widget/topic")" ]
+    [ "$(last_line)" = "✓ topic  ../topic  switched to acme/widget/topic (renamed from 0)" ]
+
+    : >"$STUB_TMUX_LOG"
+    STUB_TMUX_SESSIONS="$(sessions \
+        widget/topic "$TMP/other" "$TMP/other" \
+        acme/widget/topic "$LAYOUT/topic" "$LAYOUT/topic")"
+    TMUX=stub run wkt new -b topic --tmux
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "set-option -t =acme/widget/topic: @wkt-worktree $LAYOUT/topic" \
+        "switch-client -t =acme/widget/topic")" ]
+}
+
+@test "--tmux -n renames an existing session, until a switch without -n" {
+    make_layout
+    cd "$LAYOUT/main"
+    STUB_TMUX_SESSIONS="$(sessions widget/topic "$LAYOUT/topic" "$LAYOUT/topic")" \
+        TMUX=stub run wkt new -b topic -n "Login page.v2" --tmux
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "rename-session -t =widget/topic Login page-v2" \
+        "set-option -t =Login page-v2: @wkt-worktree $LAYOUT/topic" \
+        "switch-client -t =Login page-v2")" ]
+    [ "$(last_line)" = "✓ topic (Login page.v2)  ../topic  switched to Login page-v2 (renamed from widget/topic)" ]
+
+    : >"$STUB_TMUX_LOG"
+    STUB_TMUX_SESSIONS="$(sessions "Login page-v2" "$LAYOUT/topic" "$LAYOUT/topic")" \
+        TMUX=stub run wkt new -b topic -n "Login page.v2" --tmux
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "set-option -t =Login page-v2: @wkt-worktree $LAYOUT/topic" \
+        "switch-client -t =Login page-v2")" ]
+
+    : >"$STUB_TMUX_LOG"
+    STUB_TMUX_SESSIONS="$(sessions "Login page-v2" "$LAYOUT/topic" "$LAYOUT/topic")" \
+        TMUX=stub run wkt new -b topic --tmux
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "rename-session -t =Login page-v2 widget/topic" \
+        "set-option -t =widget/topic: @wkt-worktree $LAYOUT/topic" \
+        "switch-client -t =widget/topic")" ]
+}
+
+@test "--tmux when renaming fails: warning, still tagged and switched to by its old name, exit 0" {
+    make_layout
+    cd "$LAYOUT/main"
+    STUB_TMUX_SESSIONS="$(sessions 0 "" "$LAYOUT/topic")"
+    export STUB_TMUX_SESSIONS
+    TMUX=stub STUB_TMUX_FAIL=rename-session run --separate-stderr wkt new -b topic --tmux
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "rename-session -t =0 widget/topic" \
+        "set-option -t =0: @wkt-worktree $LAYOUT/topic" \
+        "switch-client -t =0")" ]
+    contains "$stderr" "tmux didn't rename session 0 to widget/topic: stub tmux: rename-session failed"
+    [ "$(last_line)" = "✓ topic  ../topic  switched to 0" ]
+
+    : >"$STUB_TMUX_LOG"
+    STUB_TMUX_FAIL=rename-session run --separate-stderr wkt new -b topic --tmux
+    [ "$status" -eq 0 ]
+    contains "$output" "✓ topic  ../topic  already open in tmux"
+    lacks "$output" "renamed"
+    [ "$(last_line)" = "→ attach with: tmux attach -t 0" ]
+}
+
+@test "--tmux when tagging an existing session fails: warning, still switched to, exit 0" {
+    make_layout
+    cd "$LAYOUT/main"
+    STUB_TMUX_SESSIONS="$(sessions 0 "" "$LAYOUT/topic")"
+    export STUB_TMUX_SESSIONS
+    TMUX=stub STUB_TMUX_FAIL=set-option run --separate-stderr wkt new -b topic --tmux
+    [ "$status" -eq 0 ]
+    [ "$(tmux_calls)" = "$(printf '%s\n' "$LIST" \
+        "rename-session -t =0 widget/topic" \
+        "set-option -t =widget/topic: @wkt-worktree $LAYOUT/topic" \
+        "switch-client -t =widget/topic")" ]
+    contains "$stderr" "tmux didn't tag session widget/topic: stub tmux: set-option failed"
+    [ "$(last_line)" = "✓ topic  ../topic  switched to widget/topic (renamed from 0)" ]
 }
 
 @test "--tmux: a name another session has falls back to <org>/<repo>/<branch>, then -2" {

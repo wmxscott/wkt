@@ -276,7 +276,7 @@ $WKT_ROOT/<org>/<repo>/<branch>
 
 ## tmux
 
-`wkt new --tmux`, and the [picker](#the-picker)'s `wkt --tmux`, give the worktree its own tmux session. If the worktree already has one, wkt uses it. Otherwise it makes one, detached, starting in the worktree's folder, and tags it with the worktree's path. If no tmux server is running, making the session starts one.
+`wkt new --tmux`, and the [picker](#the-picker)'s `wkt --tmux`, give the worktree its own tmux session. If the worktree already has one, wkt uses it, first giving it the [name](#session-names) it should have and tagging it with the worktree's path again. Otherwise it makes one, detached, starting in the worktree's folder, and tags it with the worktree's path. If no tmux server is running, making the session starts one.
 
 - **Inside tmux**, when `$TMUX` is set, wkt switches your client to the session.
 - **Outside tmux**, it switches nothing and prints how to attach:
@@ -293,7 +293,9 @@ $ wkt new -b fix-login --tmux
 
 A session is named `<repo>/<branch>`, like `widget/fix-login`, so tmux's status bar says which repository you're in. `<repo>` is the name from origin's URL that normal clones' [paths](#where-worktrees-go) use, and `.bare` layouts use it too. Without an origin, it's the repository's folder: the clone, or the folder that holds `.bare`. tmux reads `.` and `:` in a target as separators, so they become `-`: branch `v1.2` gives `widget/v1-2`.
 
-If a session that isn't this worktree's already has the name, wkt uses `<org>/<repo>/<branch>`, like `acme/widget/fix-login`. If that's taken too, it adds `-2`, `-3` and so on. `-n <name>` chooses the name yourself, with the same `-2` rule. `wkt new` only names a new session; one that already exists keeps its name until [`wkt rename`](#wkt-rename) renames it.
+If a session that isn't this worktree's already has the name, wkt uses `<org>/<repo>/<branch>`, like `acme/widget/fix-login`. If that's taken too, it adds `-2`, `-3` and so on. `-n <name>` chooses the name yourself, with the same `-2` rule.
+
+Switching to a session that already exists, from `wkt new --tmux` or the picker, corrects its name, so one you made or renamed yourself gets the name above. `wkt new`'s `✓` line says so: `switched to widget/fix-login (renamed from 0)`. The session's own name never counts as taken. A name chosen with `-n` lasts only until the next switch without `-n`, which puts the usual name back; tmux-resurrect doesn't save `@` options, so there's nowhere for wkt to remember it. If tmux won't rename the session, wkt warns and switches to it by the name it has.
 
 ### Finding a worktree's session
 
